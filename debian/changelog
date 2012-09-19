@@ -1,0 +1,5 @@
+python-network (0.1-1) unstable; urgency=low
+
+  * Initial release. (Closes: #686357)
+
+ -- Bas Wijnen <wijnen@debian.org>  Fri, 31 Aug 2012 11:36:22 +0200
