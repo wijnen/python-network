@@ -95,7 +95,7 @@ class Socket: # {{{
 			server = dbus.Interface (bus.get_object (avahi.DBUS_NAME, '/'), 'org.freedesktop.Avahi.Server')
 			browser = dbus.Interface (bus.get_object (avahi.DBUS_NAME, server.ServiceBrowserNew (avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, type, 'local', dbus.UInt32 (0))), avahi.DBUS_INTERFACE_SERVICE_BROWSER)
 			def handle2 (*args):
-				self.remote = (str (args[7]), int (args[8]))
+				self.remote = (str (args[5]), int (args[8]))
 				mainloop.quit ()
 			def handle_error (*args):
 				print ('avahi lookup error (ignored): %s' % args[0])
@@ -269,7 +269,7 @@ if have_glib:	# {{{
 	# }}}
 
 	class RPCServer: # {{{
-		def __init__ (self, port, factory, disconnected = None, address = '0.0.0.0', backlog = 5):
+		def __init__ (self, port, factory, disconnected = None, address = '', backlog = 5):
 			self.factory = factory
 			self.disconnected = disconnected
 			self.server = Server (port, None, self._accept, address, backlog)
