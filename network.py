@@ -125,14 +125,80 @@ class Socket: # {{{
 			raise EOFError ('network connection closed')
 		return ret
 	def read (self, callback, maxsize = 4096):
-		if have_glib:
-			glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback (self.recv (maxsize)))
+		assert have_glib
+		glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback (self.recv (maxsize)))
 	def rawread (self, callback):
-		if have_glib:
-			glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback ())
+		assert have_glib
+		glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback ())
 # }}}
 
-if have_glib:
+class RPCSocket (object): # {{{
+	def __init__ (self, address, object = None, disconnected = None):
+		self._object = object
+		self._disconnected = disconnected
+		if isinstance (address, Socket):
+			self._socket = address
+		else:
+			self._socket = Socket (address, None)
+		self._socket.rawread (self._cb)
+	def __getattr__ (self, attr):
+		if attr == '__methods__':
+			return self._call ('__methods__', [], {})
+		ret = lambda *arg, **karg: self._call (attr, arg, karg)
+		ret.__doc__ = self._call ('__doc__', [attr], {})
+		return ret
+	def _call (self, attr, arg, karg):
+		self._send ((attr, arg, karg))
+		while True:
+			ret = self._recv ()
+			if len (ret) == 2:
+				r, v = ret
+				break
+			self._handle_recv (ret)
+		if r == 'E':
+			print 'exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1]))
+			raise v[0]
+		else:
+			return v
+	def _send (self, data):
+		d = pickle.dumps (data)
+		self._socket.send ('%20d' % len (d) + d)
+	def _recv (self):
+		l = int (self._socket.recv (20))
+		data = ''
+		while len (data) < l:
+			data += self._socket.recv (l - len (data))
+		return pickle.loads (data)
+	def _cb (self):
+		try:
+			data = self._recv ()
+		except EOFError:
+			if self._disconnected:
+				self._disconnected ()
+			return False
+		self._handle_recv (data)
+		return True
+	def _handle_recv (self, data):
+		attr, a, ka = data
+		try:
+			if attr == '__methods__':
+				ret = [x for x in dir (self._object) if not x.startswith ('_') and callable (getattr (self._object, x))]
+			elif attr == '__doc__':
+				ret = getattr (self._object, a[0]).__doc__
+			else:
+				assert attr != '' and attr[0] != '_'
+				ret = getattr (self._object, attr) (*a, **ka)
+			self._send (('R', ret))
+		except:
+			t = sys.exc_traceback
+			tb = []
+			while t:
+				tb.append ((t.tb_frame.f_code.co_filename, t.tb_lineno))
+				t = t.tb_next
+			self._send (('E', (sys.exc_value, tb)))
+# }}}
+
+if have_glib:	# {{{
 	class Server: # {{{
 		def __init__ (self, port, datacb, acceptcb = None, address = '', backlog = 5):
 			'''Listen on a port and accept connections.'''
@@ -202,88 +268,23 @@ if have_glib:
 				self.close ()
 	# }}}
 
-class RPCSocket (object): # {{{
-	def __init__ (self, address, object = None, disconnected = None):
-		self._object = object
-		self._disconnected = disconnected
-		if isinstance (address, Socket):
-			self._socket = address
-		else:
-			self._socket = Socket (address, None)
-		self._socket.rawread (self._cb)
-	def __getattr__ (self, attr):
-		if attr == '__methods__':
-			return self._call ('__methods__', [], {})
-		ret = lambda *arg, **karg: self._call (attr, arg, karg)
-		ret.__doc__ = self._call ('__doc__', [attr], {})
-		return ret
-	def _call (self, attr, arg, karg):
-		self._send ((attr, arg, karg))
-		while True:
-			ret = self._recv ()
-			if len (ret) == 2:
-				r, v = ret
-				break
-			self._handle_recv (ret)
-		if r == 'E':
-			print 'exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1]))
-			raise v[0]
-		else:
-			return v
-	def _send (self, data):
-		d = pickle.dumps (data)
-		self._socket.send ('%20d' % len (d) + d)
-	def _recv (self):
-		l = int (self._socket.recv (20))
-		data = ''
-		while len (data) < l:
-			data += self._socket.recv (l - len (data))
-		return pickle.loads (data)
-	def _cb (self):
-		try:
-			data = self._recv ()
-		except EOFError:
-			if self._disconnected:
-				self._disconnected ()
-			return False
-		self._handle_recv (data)
-		return True
-	def _handle_recv (self, data):
-		attr, a, ka = data
-		try:
-			if attr == '__methods__':
-				ret = [x for x in dir (self._object) if not x.startswith ('_') and callable (getattr (self._object, x))]
-			elif attr == '__doc__':
-				ret = getattr (self._object, a[0]).__doc__
-			else:
-				assert attr != '' and attr[0] != '_'
-				ret = getattr (self._object, attr) (*a, **ka)
-			self._send (('R', ret))
-		except:
-			t = sys.exc_traceback
-			tb = []
-			while t:
-				tb.append ((t.tb_frame.f_code.co_filename, t.tb_lineno))
-				t = t.tb_next
-			self._send (('E', (sys.exc_value, tb)))
-# }}}
+	class RPCServer: # {{{
+		def __init__ (self, port, factory, disconnected = None, address = '0.0.0.0', backlog = 5):
+			self.factory = factory
+			self.disconnected = disconnected
+			self.server = Server (port, None, self._accept, address, backlog)
+		def close (self):
+			self.server.close ()
+		def _accept (self, socket):
+			rpc = RPCSocket (socket, None)
+			rpc._object = self.factory (rpc)
+			if self.disconnected is not None:
+				rpc._disconnected = lambda: self.disconnected (rpc)
+	# }}}
 
-class RPCServer: # {{{
-	def __init__ (self, port, factory, disconnected = None, address = '0.0.0.0', backlog = 5):
-		self.factory = factory
-		self.disconnected = disconnected
-		self.server = Server (port, None, self._accept, address, backlog)
-	def close (self):
-		self.server.close ()
-	def _accept (self, socket):
-		rpc = RPCSocket (socket, None)
-		rpc._object = self.factory (rpc)
-		if self.disconnected is not None:
-			rpc._disconnected = lambda: self.disconnected (rpc)
-# }}}
-
-def bgloop (): # {{{
-	if os.fork () != 0:
-		sys.exit (0)
-	glib.MainLoop ().run ()
+	def bgloop (): # {{{
+		if os.fork () != 0:
+			sys.exit (0)
+		glib.MainLoop ().run ()
+	# }}}
 # }}}
