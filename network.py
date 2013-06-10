@@ -103,10 +103,18 @@ class Socket: # {{{
 				if count[0] == 0:
 					server.ResolveService (interface, protocol, name, type, domain, avahi.PROTO_UNSPEC, dbus.UInt32 (0), reply_handler = handle2, error_handler = handle_error)
 				count[0] -= 1
+			def handle_eof ():
+				self.remote = None
+				mainloop.quit ()
 			browser.connect_to_signal ('ItemNew', handle)
+			browser.connect_to_signal('AllForNow', handle_eof)
+			browser.connect_to_signal('Failure', handle_eof)
 			mainloop = glib.MainLoop ()
 			mainloop.run ()
-			self.socket = socket.create_connection (self.remote)
+			if self.remote is not None:
+				self.socket = socket.create_connection (self.remote)
+			else:
+				raise EOFError ('Avahi service not found')
 		else:
 			if isinstance (address, str) and ':' in address:
 				host, port = address.rsplit (':', 1)
