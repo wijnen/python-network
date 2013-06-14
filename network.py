@@ -56,10 +56,6 @@ except:
 # - RPCServer, RPCSocket: wrapper with RPC interface
 # }}}
 
-class Error (StandardError): # {{{
-	pass
-# }}}
-
 def lookup (service): # {{{
 	if isinstance (service, int):
 		return service
@@ -291,8 +287,11 @@ if have_glib:	# {{{
 	# }}}
 
 	def bgloop (): # {{{
-		if os.fork () != 0:
-			sys.exit (0)
+	        if os.getenv ('NETWORK_NO_FORK') is None:
+			if os.fork () != 0:
+				sys.exit (0)
+			else:
+				sys.stderr.write ('Not backgrounding because NETWORK_NO_FORK is set\n')
 		glib.MainLoop ().run ()
 	# }}}
 # }}}
