@@ -21,6 +21,12 @@ import sys
 import os
 import pickle
 import socket
+import re
+try:
+	import ssl
+	have_ssl = True
+except:
+	have_ssl = False
 try:
 	import glib
 	have_glib = True
@@ -67,25 +73,27 @@ def lookup (service): # {{{
 # }}}
 
 class Socket: # {{{
-	def __init__ (self, address, remote = None):
+	def __init__ (self, address, tls = True, disconnect_cb = None, remote = None): # {{{
 		self.remote = remote
+		self._disconnect_cb = disconnect_cb
+		self.event = None
+		self._linebuffer = ''
 		if isinstance (address, socket.socket):
 			self.socket = address
 			return
 		if isinstance (address, str) and '/' in address:
 			# Unix socket.
+			# TLS is ignored for those.
 			self.remote = address
 			self.socket = socket.socket (socket.AF_UNIX)
 			self.socket.connect (self.remote)
 		elif have_avahi and isinstance (address, str) and '|' in address:
 			# Avahi.
 			ret = []
+			found = [False]
 			info = address.split ('|')
 			assert len (info) == 2
-			if info[1] == '':
-				count = [0]
-			else:
-				count = [int (info[1])]
+			regexp = re.compile (info[1])
 			type = '_%s._tcp' % info[0]
 			bus = dbus.SystemBus (mainloop = DBusGMainLoop ())
 			server = dbus.Interface (bus.get_object (avahi.DBUS_NAME, '/'), 'org.freedesktop.Avahi.Server')
@@ -96,10 +104,14 @@ class Socket: # {{{
 			def handle_error (*args):
 				print ('avahi lookup error (ignored): %s' % args[0])
 			def handle (interface, protocol, name, type, domain, flags):
-				if count[0] == 0:
+				if found[0]:
+					return
+				if regexp.match (name):
+					found[0] = True
 					server.ResolveService (interface, protocol, name, type, domain, avahi.PROTO_UNSPEC, dbus.UInt32 (0), reply_handler = handle2, error_handler = handle_error)
-				count[0] -= 1
 			def handle_eof ():
+				if found[0]:
+					return
 				self.remote = None
 				mainloop.quit ()
 			browser.connect_to_signal ('ItemNew', handle)
@@ -109,6 +121,9 @@ class Socket: # {{{
 			mainloop.run ()
 			if self.remote is not None:
 				self.socket = socket.create_connection (self.remote)
+				if tls:
+					assert have_ssl
+					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
 			else:
 				raise EOFError ('Avahi service not found')
 		else:
@@ -118,32 +133,104 @@ class Socket: # {{{
 				host, port = 'localhost', address
 			self.remote = (host, lookup (port))
 			self.socket = socket.create_connection (self.remote)
-	def close (self):
+			if tls:
+				assert have_ssl
+				self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+	# }}}
+	def disconnect_cb (self, disconnect_cb): # {{{
+		self._disconnect_cb = disconnect_cb
+	# }}}
+	def close (self): # {{{
+		if not self.socket:
+			return
+		data = self.unread ()
 		self.socket.close ()
-		del self.socket
-	def send (self, data):
+		self.socket = None
+		if self._disconnect_cb:
+			self._disconnect_cb (data)
+	# }}}
+	def send (self, data): # {{{
+		if self.socket is None:
+			return
 		self.socket.sendall (data)
-	def recv (self, maxsize = 4096):
+	# }}}
+	def recv (self, maxsize = 4096): # {{{
+		if self.socket is None:
+			return ''
 		ret = self.socket.recv (maxsize)
 		if len (ret) == 0:
-			raise EOFError ('network connection closed')
+			data = self.unread ()
+			if self._disconnect_cb:
+				ret = self._disconnect_cb (data)
+			else:
+				raise EOFError ('network connection closed')
 		return ret
-	def read (self, callback, maxsize = 4096):
+	# }}}
+	def rawread (self, callback): # {{{
 		assert have_glib
-		glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback (self.recv (maxsize)))
-	def rawread (self, callback):
+		if self.socket is None:
+			return ''
+		ret = self.unread ()
+		self.callback = (callback, None)
+		self.event = glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: (callback () or True))
+		return ret
+	# }}}
+	def read (self, callback, maxsize = 4096): # {{{
 		assert have_glib
-		glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: callback ())
+		if self.socket is None:
+			return ''
+		first = self.unread ()
+		self.maxsize = maxsize
+		self.callback = (callback, False)
+		def cb (fd, cond):
+			data = self.recv (self.maxsize)
+			if not self.event:
+				return False
+			callback (data)
+			return True
+		self.event = glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, cb)
+		if first:
+			callback (first)
+	# }}}
+	def readlines (self, callback, maxsize = 4096): # {{{
+		assert have_glib
+		if self.socket is None:
+			return
+		self._linebuffer = self.unread ()
+		self.maxsize = maxsize
+		self.callback = (callback, True)
+		self.event = glib.io_add_watch (self.socket.fileno (), glib.IO_IN | glib.IO_PRI, lambda fd, cond: (self._line_cb () or True))
+	# }}}
+	def _line_cb (self): # {{{
+		self._linebuffer += self.recv (self.maxsize)
+		while '\n' in self._linebuffer and self.event:
+			assert self.callback[1] is not None	# Going directly from readlines() to rawread() is not allowed.
+			if self.callback[1]:
+				line, self._linebuffer = self._linebuffer.split ('\n', 1)
+				self.callback[0] (line)
+			else:
+				data = self._linebuffer
+				self._linebuffer = ''
+				self.callback[0] (self._linebuffer)
+	# }}}
+	def unread (self): # {{{
+		if self.event:
+			glib.source_remove (self.event)
+			self.event = None
+		ret = self._linebuffer
+		self._linebuffer = ''
+		return ret
+	# }}}
 # }}}
 
 class RPCSocket (object): # {{{
-	def __init__ (self, address, object = None, disconnected = None):
+	def __init__ (self, address, object = None, tls = True, disconnected = None):
 		self._object = object
 		self._disconnected = disconnected
 		if isinstance (address, Socket):
 			self._socket = address
 		else:
-			self._socket = Socket (address, None)
+			self._socket = Socket (address, tls)
 		self._socket.rawread (self._cb)
 	def __getattr__ (self, attr):
 		if attr == '__methods__':
@@ -160,7 +247,7 @@ class RPCSocket (object): # {{{
 				break
 			self._handle_recv (ret)
 		if r == 'E':
-			print 'exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1]))
+			print ('exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1])))
 			raise v[0]
 		else:
 			return v
@@ -204,14 +291,16 @@ class RPCSocket (object): # {{{
 
 if have_glib:	# {{{
 	class Server: # {{{
-		def __init__ (self, port, datacb, acceptcb = None, address = '', backlog = 5):
-			'''Listen on a port and accept connections.'''
+		def __init__ (self, port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None):
+			'''Listen on a port and accept connections.  Set tls to a key+certificate file to use tls.'''
+			self.disconnect_cb = disconnect_cb
 			self.group = None
-			self.datacb = datacb
-			self.acceptcb = acceptcb
+			self.obj = obj
 			self.port = ''
+			self.ipv6 = False
 			if isinstance (port, str) and '/' in port:
 				# Unix socket.
+				# TLS is ignored for these sockets.
 				self.socket = socket.socket (socket.AF_UNIX)
 				self.socket.bind (port)
 				self.port = port
@@ -227,10 +316,17 @@ if have_glib:	# {{{
 				if len (info) > 2:
 					self.socket.bind ((address, lookup (info[2])))
 				self.socket.listen (backlog)
+				if tls:
+					assert have_ssl
+					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				if address == '':
 					p = self.socket.getsockname ()[1]
 					self.socket6.bind (('::1', p))
 					self.socket6.listen (backlog)
+					self.ipv6 = True
+					if tls:
+						assert have_ssl
+						self.socket6 = ssl.wrap_socket (self.socket6, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				bus = dbus.SystemBus ()
 				server = dbus.Interface (bus.get_object (avahi.DBUS_NAME, avahi.DBUS_PATH_SERVER), avahi.DBUS_INTERFACE_SERVER)
 				self.group = dbus.Interface (bus.get_object (avahi.DBUS_NAME, server.EntryGroupNew ()), avahi.DBUS_INTERFACE_ENTRY_GROUP)
@@ -242,21 +338,27 @@ if have_glib:	# {{{
 				self.socket.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 				self.socket.bind ((address, port))
 				self.socket.listen (backlog)
+				if tls:
+					assert have_ssl
+					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				if address == '':
 					self.socket6 = socket.socket (socket.AF_INET6)
 					self.socket6.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 					self.socket6.bind (('::1', port))
 					self.socket6.listen (backlog)
+					self.ipv6 = True
+					if tls:
+						assert have_ssl
+						self.socket6 = ssl.wrap_socket (self.socket6, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				self.port = port
 			fd = self.socket.fileno ()
 			glib.io_add_watch (fd, glib.IO_IN | glib.IO_PRI, self._cb)
+		def disconnect_cb (self, disconnect_cb):
+			self.disconnect_cb = disconnect_cb
 		def _cb (self, fd, cond):
 			new_socket = self.socket.accept ()
-			s = Socket (new_socket[0], new_socket[1])
-			if self.acceptcb is not None:
-				self.acceptcb (s)
-			if self.datacb is not None:
-				s.read (lambda data: self.datacb (s, data) or True)
+			s = Socket (new_socket[0], new_socket[1], disconnect_cb = self.disconnect_cb)
+			self.obj (s)
 			return True
 		def close (self):
 			if self.group:
@@ -264,6 +366,9 @@ if have_glib:	# {{{
 				self.group = None
 			self.socket.close ()
 			self.socket = None
+			if self.ipv6:
+				self.socket6.close ()
+				self.socket6 = None
 			if '/' in self.port:
 				os.remove (self.port)
 			self.port = ''
@@ -273,25 +378,30 @@ if have_glib:	# {{{
 	# }}}
 
 	class RPCServer: # {{{
-		def __init__ (self, port, factory, disconnected = None, address = '', backlog = 5):
+		def __init__ (self, port, factory, disconnected = None, address = '', backlog = 5, tls = None):
+			self.tls = tls
 			self.factory = factory
 			self.disconnected = disconnected
-			self.server = Server (port, None, self._accept, address, backlog)
+			self.server = Server (port, self._accept, address, backlog, None)
 		def close (self):
 			self.server.close ()
 		def _accept (self, socket):
-			rpc = RPCSocket (socket, None)
+			rpc = RPCSocket (socket, None, self.tls)
 			rpc._object = self.factory (rpc)
 			if self.disconnected is not None:
 				rpc._disconnected = lambda: self.disconnected (rpc)
 	# }}}
 
+	def fgloop (): # {{{
+		glib.MainLoop ().run ()
+	# }}}
+
 	def bgloop (): # {{{
-	        if os.getenv ('NETWORK_NO_FORK') is None:
+		if os.getenv ('NETWORK_NO_FORK') is None:
 			if os.fork () != 0:
 				sys.exit (0)
 			else:
 				sys.stderr.write ('Not backgrounding because NETWORK_NO_FORK is set\n')
-		glib.MainLoop ().run ()
+		fgloop ()
 	# }}}
 # }}}
