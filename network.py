@@ -298,6 +298,7 @@ if have_glib:	# {{{
 			self.obj = obj
 			self.port = ''
 			self.ipv6 = False
+			self.tls = tls
 			if isinstance (port, str) and '/' in port:
 				# Unix socket.
 				# TLS is ignored for these sockets.
@@ -316,17 +317,11 @@ if have_glib:	# {{{
 				if len (info) > 2:
 					self.socket.bind ((address, lookup (info[2])))
 				self.socket.listen (backlog)
-				if tls:
-					assert have_ssl
-					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				if address == '':
 					p = self.socket.getsockname ()[1]
 					self.socket6.bind (('::1', p))
 					self.socket6.listen (backlog)
 					self.ipv6 = True
-					if tls:
-						assert have_ssl
-						self.socket6 = ssl.wrap_socket (self.socket6, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				bus = dbus.SystemBus ()
 				server = dbus.Interface (bus.get_object (avahi.DBUS_NAME, avahi.DBUS_PATH_SERVER), avahi.DBUS_INTERFACE_SERVER)
 				self.group = dbus.Interface (bus.get_object (avahi.DBUS_NAME, server.EntryGroupNew ()), avahi.DBUS_INTERFACE_ENTRY_GROUP)
@@ -338,18 +333,12 @@ if have_glib:	# {{{
 				self.socket.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 				self.socket.bind ((address, port))
 				self.socket.listen (backlog)
-				if tls:
-					assert have_ssl
-					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				if address == '':
 					self.socket6 = socket.socket (socket.AF_INET6)
 					self.socket6.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 					self.socket6.bind (('::1', port))
 					self.socket6.listen (backlog)
 					self.ipv6 = True
-					if tls:
-						assert have_ssl
-						self.socket6 = ssl.wrap_socket (self.socket6, ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = tls)
 				self.port = port
 			fd = self.socket.fileno ()
 			glib.io_add_watch (fd, glib.IO_IN | glib.IO_PRI, self._cb)
@@ -357,7 +346,14 @@ if have_glib:	# {{{
 			self.disconnect_cb = disconnect_cb
 		def _cb (self, fd, cond):
 			new_socket = self.socket.accept ()
-			s = Socket (new_socket[0], new_socket[1], disconnect_cb = self.disconnect_cb)
+			if self.tls:
+				assert have_ssl
+				try:
+					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls), new_socket[1])
+				except:
+					sys.stderr.write ('Failed to accept connection for %s: %s\n' % (repr (new_socket[1]), sys.exc_value))
+					return True
+			s = Socket (new_socket[0], remote = new_socket[1], disconnect_cb = self.disconnect_cb)
 			self.obj (s)
 			return True
 		def close (self):
