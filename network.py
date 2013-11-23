@@ -147,7 +147,8 @@ class Socket: # {{{
 		self.socket.close ()
 		self.socket = None
 		if self._disconnect_cb:
-			self._disconnect_cb (data)
+			return self._disconnect_cb (data)
+		return data
 	# }}}
 	def send (self, data): # {{{
 		if self.socket is None:
@@ -157,12 +158,15 @@ class Socket: # {{{
 	def recv (self, maxsize = 4096): # {{{
 		if self.socket is None:
 			return ''
-		ret = self.socket.recv (maxsize)
+		try:
+			ret = self.socket.recv (maxsize)
+		except:
+			sys.stderr.write ('Error reading from socket: %s' % sys.exc_value)
+			self.close ()
+			return ''
 		if len (ret) == 0:
-			data = self.unread ()
-			if self._disconnect_cb:
-				ret = self._disconnect_cb (data)
-			else:
+			ret = self.close ()
+			if not self._disconnect_cb:
 				raise EOFError ('network connection closed')
 		return ret
 	# }}}
@@ -293,12 +297,13 @@ if have_glib:	# {{{
 	class Server: # {{{
 		def __init__ (self, port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None):
 			'''Listen on a port and accept connections.  Set tls to a key+certificate file to use tls.'''
-			self.disconnect_cb = disconnect_cb
+			self._disconnect_cb = disconnect_cb
 			self.group = None
 			self.obj = obj
 			self.port = ''
 			self.ipv6 = False
 			self.tls = tls
+			self.connections = set ()
 			if isinstance (port, str) and '/' in port:
 				# Unix socket.
 				# TLS is ignored for these sockets.
@@ -342,8 +347,8 @@ if have_glib:	# {{{
 				self.port = port
 			fd = self.socket.fileno ()
 			glib.io_add_watch (fd, glib.IO_IN | glib.IO_PRI, self._cb)
-		def disconnect_cb (self, disconnect_cb):
-			self.disconnect_cb = disconnect_cb
+		def set_disconnect_cb (self, disconnect_cb):
+			self._disconnect_cb = disconnect_cb
 		def _cb (self, fd, cond):
 			new_socket = self.socket.accept ()
 			if self.tls:
@@ -353,9 +358,15 @@ if have_glib:	# {{{
 				except:
 					sys.stderr.write ('Failed to accept connection for %s: %s\n' % (repr (new_socket[1]), sys.exc_value))
 					return True
-			s = Socket (new_socket[0], remote = new_socket[1], disconnect_cb = self.disconnect_cb)
+			s = Socket (new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect (s, data))
+			self.connections.add (s)
 			self.obj (s)
 			return True
+		def _handle_disconnect (self, socket, data):
+			self.connections.remove (s)
+			if self._disconnect_cb:
+				return self._disconnect_cb (data)
+			return data
 		def close (self):
 			if self.group:
 				self.group.Reset ()
