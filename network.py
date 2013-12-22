@@ -259,7 +259,10 @@ class RPCSocket (object): # {{{
 		d = pickle.dumps (data)
 		self._socket.send ('%20d' % len (d) + d)
 	def _recv (self):
-		l = int (self._socket.recv (20))
+		d = self._socket.recv (20)
+		if len (d) == 0:
+			raise EOFError ("EOF at start of frame")
+		l = int (d)
 		data = ''
 		while len (data) < l:
 			data += self._socket.recv (l - len (data))
@@ -354,7 +357,12 @@ if have_glib:	# {{{
 			if self.tls:
 				assert have_ssl
 				try:
-					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls), new_socket[1])
+					if ':' in self.tls:
+						key, cert = self.tls.split (':', 1)
+					else:
+						key = None
+						cert = self.tls
+					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = cert, keyfile = key), new_socket[1])
 				except:
 					sys.stderr.write ('Failed to accept connection for %s: %s\n' % (repr (new_socket[1]), sys.exc_value))
 					return True
@@ -363,7 +371,7 @@ if have_glib:	# {{{
 			self.obj (s)
 			return True
 		def _handle_disconnect (self, socket, data):
-			self.connections.remove (s)
+			self.connections.remove (socket)
 			if self._disconnect_cb:
 				return self._disconnect_cb (data)
 			return data
