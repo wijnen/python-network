@@ -417,8 +417,8 @@ if have_glib:	# {{{
 	loop = None
 	def fgloop (): # {{{
 		global loop
-		if loop is None:
-			loop = glib.MainLoop ()
+		assert loop is None
+		loop = glib.MainLoop ()
 		loop.run ()
 	# }}}
 
@@ -432,6 +432,9 @@ if have_glib:	# {{{
 	# }}}
 
 	def endloop (): # {{{
+		global loop
+		assert loop is not None
 		loop.quit ()
+		loop = None
 	# }}}
 # }}}
