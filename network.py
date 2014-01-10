@@ -132,6 +132,7 @@ class Socket: # {{{
 			else:
 				host, port = 'localhost', address
 			self.remote = (host, lookup (port))
+			#print ('remote %s' % str (self.remote))
 			self.socket = socket.create_connection (self.remote)
 			if tls:
 				assert have_ssl
@@ -350,10 +351,16 @@ if have_glib:	# {{{
 				self.port = port
 			fd = self.socket.fileno ()
 			glib.io_add_watch (fd, glib.IO_IN | glib.IO_PRI, self._cb)
+			if self.ipv6:
+				fd = self.socket6.fileno ()
+				glib.io_add_watch (fd, glib.IO_IN | glib.IO_PRI, self._cb)
 		def set_disconnect_cb (self, disconnect_cb):
 			self._disconnect_cb = disconnect_cb
 		def _cb (self, fd, cond):
-			new_socket = self.socket.accept ()
+			if fd == self.socket.fileno ():
+				new_socket = self.socket.accept ()
+			else:
+				new_socket = self.socket6.accept ()
 			if self.tls:
 				assert have_ssl
 				try:
@@ -407,16 +414,24 @@ if have_glib:	# {{{
 				rpc._disconnected = lambda: self.disconnected (rpc)
 	# }}}
 
+	loop = None
 	def fgloop (): # {{{
-		glib.MainLoop ().run ()
+		global loop
+		if loop is None:
+			loop = glib.MainLoop ()
+		loop.run ()
 	# }}}
 
 	def bgloop (): # {{{
 		if os.getenv ('NETWORK_NO_FORK') is None:
 			if os.fork () != 0:
 				sys.exit (0)
-			else:
-				sys.stderr.write ('Not backgrounding because NETWORK_NO_FORK is set\n')
+		else:
+			sys.stderr.write ('Not backgrounding because NETWORK_NO_FORK is set\n')
 		fgloop ()
+	# }}}
+
+	def endloop (): # {{{
+		loop.quit ()
 	# }}}
 # }}}
