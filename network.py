@@ -22,6 +22,8 @@ import os
 import pickle
 import socket
 import re
+import time
+import xdgbasedir
 try:
 	import ssl
 	have_ssl = True
@@ -40,7 +42,6 @@ try:
 except:
 	have_avahi = False
 	have_glib = False
-	pass
 # }}}
 
 # {{{ Interface description
@@ -60,6 +61,11 @@ except:
 # - Server: listener, creating Sockets on accept
 # - Socket: used for connection; symmetric
 # - RPCServer, RPCSocket: wrapper with RPC interface
+# }}}
+
+def log (message): # {{{
+	t = time.strftime ('%c %Z %z')
+	sys.stderr.write (''.join (['%s: %s\n' % (t, m) for m in message.split ('\n')]))
 # }}}
 
 def lookup (service): # {{{
@@ -102,7 +108,7 @@ class Socket: # {{{
 				self.remote = (str (args[5]), int (args[8]))
 				mainloop.quit ()
 			def handle_error (*args):
-				print ('avahi lookup error (ignored): %s' % args[0])
+				log ('avahi lookup error (ignored): %s' % args[0])
 			def handle (interface, protocol, name, type, domain, flags):
 				if found[0]:
 					return
@@ -132,11 +138,14 @@ class Socket: # {{{
 			else:
 				host, port = 'localhost', address
 			self.remote = (host, lookup (port))
-			#print ('remote %s' % str (self.remote))
+			#log ('remote %s' % str (self.remote))
 			self.socket = socket.create_connection (self.remote)
 			if tls:
 				assert have_ssl
-				self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				try:
+					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				except ssl.SSLError, e:
+					raise TypeError ('Socket does not seem to support TLS: ' + str (e))
 	# }}}
 	def disconnect_cb (self, disconnect_cb): # {{{
 		self._disconnect_cb = disconnect_cb
@@ -162,7 +171,7 @@ class Socket: # {{{
 		try:
 			ret = self.socket.recv (maxsize)
 		except:
-			sys.stderr.write ('Error reading from socket: %s' % sys.exc_value)
+			log ('Error reading from socket: %s' % sys.exc_value)
 			self.close ()
 			return ''
 		if len (ret) == 0:
@@ -252,7 +261,7 @@ class RPCSocket (object): # {{{
 				break
 			self._handle_recv (ret)
 		if r == 'E':
-			print ('exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1])))
+			log ('exception: %s\n%s' % (v[0], '\n'.join ('\t%s:%d' % (x[0], x[1]) for x in v[1])))
 			raise v[0]
 		else:
 			return v
@@ -306,16 +315,19 @@ if have_glib:	# {{{
 			self.obj = obj
 			self.port = ''
 			self.ipv6 = False
+			self.socket = None
 			self.tls = tls
 			self.connections = set ()
 			if isinstance (port, str) and '/' in port:
 				# Unix socket.
 				# TLS is ignored for these sockets.
+				self.tls = False
 				self.socket = socket.socket (socket.AF_UNIX)
 				self.socket.bind (port)
 				self.port = port
 				self.socket.listen (backlog)
 			elif have_avahi and isinstance (port, str) and '|' in port:
+				self._tls_init ()
 				self.socket = socket.socket ()
 				self.socket.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 				if address == '':
@@ -337,6 +349,7 @@ if have_glib:	# {{{
 				self.group.AddService (avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, dbus.UInt32 (0), info[1], '_%s._tcp' % info[0], '', '', dbus.UInt16 (self.socket.getsockname ()[1]), '')
 				self.group.Commit ()
 			else:
+				self._tls_init ()
 				port = lookup (port)
 				self.socket = socket.socket ()
 				self.socket.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -364,14 +377,9 @@ if have_glib:	# {{{
 			if self.tls:
 				assert have_ssl
 				try:
-					if ':' in self.tls:
-						key, cert = self.tls.split (':', 1)
-					else:
-						key = None
-						cert = self.tls
-					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = cert, keyfile = key), new_socket[1])
-				except:
-					sys.stderr.write ('Failed to accept connection for %s: %s\n' % (repr (new_socket[1]), sys.exc_value))
+					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls_cert, keyfile = self.tls_key), new_socket[1])
+				except ssl.SSLError, e:
+					log ('Rejecting non-TLS connection for %s: %s' % (repr (new_socket[1]), str (e)))
 					return True
 			s = Socket (new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect (s, data))
 			self.connections.add (s)
@@ -397,6 +405,69 @@ if have_glib:	# {{{
 		def __del__ (self):
 			if self.socket is not None:
 				self.close ()
+		def _tls_init (self):
+			# Set up members for using tls, if requested.
+			if self.tls is None:
+				# Use tls if possible; warn if impossible.
+				tlsconfig = xdgbasedir.config_load (None, 'network', {'tls-name': '', 'tls-key': '', 'tls-cert': ''}, os.getenv ('NETWORK_OPTS', '').split ())
+				if tlsconfig['tls-name'] == '':
+					# There is no good default for this; warn and disable tls.
+					log ('''\
+No hostname for tls was specified.  This setting does not have a default.
+Encryption is disabled as a result.
+
+To solve this, set the tls hostname using
+export NETWORK_OPTS="--tls-name=hostname.example.com --saveconfig"
+
+Then run the program again.  Use the hostname at which you want
+clients to connect to you.
+
+You only need to do this once; the saveconfig option will store the name.
+For a one time change, omit --saveconfig.''')
+					self.tls = False
+					return
+				if tlsconfig['tls-cert'] == '':
+					f = xdgbasedir.data_files_read (os.path.join ('certs', tlsconfig['tls-name'].replace (os.extsep, '_') + os.extsep + 'crt'), 'network')
+					if len (f) == 0:
+						# TODO: finish openssl command.
+						log ('''\
+No certificate file for tls was found.  Encryption is disabled as a result.
+
+To solve this, create a key using
+openssl ...
+
+Place it in your data path, normally that is:
+~/.local/share/network/keys/hostname_example_com.key
+
+When creating the path, make sure that the keys subdirectory has no read or
+execute rights for anyone except the user (you).
+
+Get your key signed by a certificate authority such as http://cacert.com.
+Put the resulting certificate in your data path as well, normally:
+~/.local/share/network/certs/hostname_example_com.crt
+
+Use the hostname at which you want clients to connect to you.''')
+						self.tls = False
+						return
+					self.tls_cert = f[0]
+				else:
+					self.tls_cert = tlsconfig['tls-cert']
+				if tlsconfig['tls-key'] == '':
+					f = xdgbasedir.data_files_read (os.path.join ('keys', tlsconfig['tls-name'].replace (os.extsep, '_') + os.extsep + 'key'), 'network')
+					if len (f) == 0:
+						self.tls_key = None
+					else:
+						self.tls_key = f[0]
+				else:
+					self.tls_key = tlsconfig['tls-key']
+				self.tls = True
+			elif self.tls:
+				f = self.tls.split (':', 1)
+				self.tls_cert = f[0]
+				if len (f) == 1:
+					self.tls_key = None
+				else:
+					self.tls_key = f[1]
 	# }}}
 
 	class RPCServer: # {{{
@@ -427,7 +498,7 @@ if have_glib:	# {{{
 			if os.fork () != 0:
 				sys.exit (0)
 		else:
-			sys.stderr.write ('Not backgrounding because NETWORK_NO_FORK is set\n')
+			log ('Not backgrounding because NETWORK_NO_FORK is set\n')
 		fgloop ()
 	# }}}
 
