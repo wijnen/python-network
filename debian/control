@@ -7,7 +7,7 @@ Standards-Version: 3.9.3
 
 Package: python-network
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}
+Depends: ${misc:Depends}, ${python:Depends}, python-xdgbasedir
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"
@@ -18,3 +18,6 @@ Description: python module for easy networking
  connections, and RPCSocket and RPCServer for connections which call methods on
  remote objects. All of this is symmetrical: once the connection is
  established, the client and server use the same interface.
+ .
+ For providing RPC functionality in a language independent way, see
+ python-wshttpd.
