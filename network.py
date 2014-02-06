@@ -410,7 +410,7 @@ if have_glib:	# {{{
 			if self.tls is None:
 				# Use tls if possible; warn if impossible.
 				tlsconfig = xdgbasedir.config_load (None, 'network', {'tls-name': '', 'tls-key': '', 'tls-cert': ''}, os.getenv ('NETWORK_OPTS', '').split ())
-				if tlsconfig['tls-name'] == '':
+				if tlsconfig['tls-name'] == '' and (tlsconfig['tls-cert'] == '' or tlsconfig['tls-key'] == ''):
 					# There is no good default for this; warn and disable tls.
 					log ('''\
 No hostname for tls was specified.  This setting does not have a default.
