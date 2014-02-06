@@ -508,4 +508,8 @@ Use the hostname at which you want clients to connect to you.''')
 		loop.quit ()
 		loop = None
 	# }}}
+
+	def iteration (): # {{{
+		glib.MainContext ().iteration (False)
+	# }}}
 # }}}
