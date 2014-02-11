@@ -21,6 +21,7 @@ import sys
 import os
 import pickle
 import socket
+import select
 import re
 import time
 import xdgbasedir
@@ -79,7 +80,7 @@ def lookup (service): # {{{
 # }}}
 
 class Socket: # {{{
-	def __init__ (self, address, tls = True, disconnect_cb = None, remote = None): # {{{
+	def __init__ (self, address, tls = None, disconnect_cb = None, remote = None): # {{{
 		self.remote = remote
 		self._disconnect_cb = disconnect_cb
 		self.event = None
@@ -127,9 +128,18 @@ class Socket: # {{{
 			mainloop.run ()
 			if self.remote is not None:
 				self.socket = socket.create_connection (self.remote)
-				if tls:
-					assert have_ssl
-					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				if tls is None:
+					try:
+						assert have_ssl
+						self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+					except:
+						self.socket = socket.create_connection (self.remote)
+				elif tls is True:
+					try:
+						assert have_ssl
+						self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+					except ssl.SSLError, e:
+						raise TypeError ('Socket does not seem to support TLS: ' + str (e))
 			else:
 				raise EOFError ('Avahi service not found')
 		else:
@@ -140,9 +150,15 @@ class Socket: # {{{
 			self.remote = (host, lookup (port))
 			#log ('remote %s' % str (self.remote))
 			self.socket = socket.create_connection (self.remote)
-			if tls:
-				assert have_ssl
+			if tls is None:
 				try:
+					assert have_ssl
+					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				except:
+					self.socket = socket.create_connection (self.remote)
+			elif tls is True:
+				try:
+					assert have_ssl
 					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
 				except ssl.SSLError, e:
 					raise TypeError ('Socket does not seem to support TLS: ' + str (e))
@@ -163,17 +179,19 @@ class Socket: # {{{
 	def send (self, data): # {{{
 		if self.socket is None:
 			return
+		#print 'sending %s' % repr (data)
 		self.socket.sendall (data)
 	# }}}
 	def recv (self, maxsize = 4096): # {{{
 		if self.socket is None:
 			return ''
+		ret = ''
 		try:
 			ret = self.socket.recv (maxsize)
 		except:
 			log ('Error reading from socket: %s' % sys.exc_value)
 			self.close ()
-			return ''
+			return ret
 		if len (ret) == 0:
 			ret = self.close ()
 			if not self._disconnect_cb:
@@ -198,7 +216,9 @@ class Socket: # {{{
 		self.callback = (callback, False)
 		def cb (fd, cond):
 			data = self.recv (self.maxsize)
+			#print ('network read %d bytes' % len (data))
 			if not self.event:
+				#print ('stopping')
 				return False
 			callback (data)
 			return True
@@ -433,20 +453,33 @@ For a one time change, omit --saveconfig.''')
 						log ('''\
 No certificate file for tls was found.  Encryption is disabled as a result.
 
-To solve this, create a key using
-openssl ...
+To solve this, create a self-signed key and certificate using
+openssl req -x509 -nodes -days 365 -newkey rsa:4096 -keyout host.key -out host.crt
 
-Place it in your data path, normally that is:
+The only important question that is asked is for the Common Name.  Answer this
+with the hostname that people will connect to or they will get errors that the
+certificate doesn't match the host they connect to.
+
+Place the key in your data path, normally that is:
 ~/.local/share/network/keys/hostname_example_com.key
 
 When creating the path, make sure that the keys subdirectory has no read or
 execute rights for anyone except the user (you).
 
-Get your key signed by a certificate authority such as http://cacert.com.
-Put the resulting certificate in your data path as well, normally:
+Better than using a self-signed certificate, is to get it signed by a trusted
+third party.  You can do this for free at http://cacert.com (but they are not
+trusted by everyone, so it may not be good enough for you).
+
+To do this, generate the key as above, and then create a signing request:
+openssl req -new -key host.key -out host.csr
+Send the resulting certificate signing request to the certificate authority and
+they should send you back a signed certificate.
+
+Put the resulting certificate (self-signed or other) in your data path as well,
+normally:
 ~/.local/share/network/certs/hostname_example_com.crt
 
-Use the hostname at which you want clients to connect to you.''')
+Use the hostname for which you created the key.''')
 						self.tls = False
 						return
 					self.tls_cert = f[0]
