@@ -81,6 +81,7 @@ def lookup (service): # {{{
 
 class Socket: # {{{
 	def __init__ (self, address, tls = None, disconnect_cb = None, remote = None): # {{{
+		self.tls = tls
 		self.remote = remote
 		self._disconnect_cb = disconnect_cb
 		self.event = None
@@ -127,19 +128,7 @@ class Socket: # {{{
 			mainloop = glib.MainLoop ()
 			mainloop.run ()
 			if self.remote is not None:
-				self.socket = socket.create_connection (self.remote)
-				if tls is None:
-					try:
-						assert have_ssl
-						self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
-					except:
-						self.socket = socket.create_connection (self.remote)
-				elif tls is True:
-					try:
-						assert have_ssl
-						self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
-					except ssl.SSLError, e:
-						raise TypeError ('Socket does not seem to support TLS: ' + str (e))
+				self.setup_connection ()
 			else:
 				raise EOFError ('Avahi service not found')
 		else:
@@ -149,19 +138,22 @@ class Socket: # {{{
 				host, port = 'localhost', address
 			self.remote = (host, lookup (port))
 			#log ('remote %s' % str (self.remote))
-			self.socket = socket.create_connection (self.remote)
-			if tls is None:
-				try:
-					assert have_ssl
-					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
-				except:
-					self.socket = socket.create_connection (self.remote)
-			elif tls is True:
-				try:
-					assert have_ssl
-					self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
-				except ssl.SSLError, e:
-					raise TypeError ('Socket does not seem to support TLS: ' + str (e))
+			self.setup_connection ()
+	# }}}
+	def setup_connection (self): # {{{
+		self.socket = socket.create_connection (self.remote)
+		if self.tls is None:
+			try:
+				assert have_ssl
+				self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+			except:
+				self.socket = socket.create_connection (self.remote)
+		elif self.tls is True:
+			try:
+				assert have_ssl
+				self.socket = ssl.wrap_socket (self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+			except ssl.SSLError, e:
+				raise TypeError ('Socket does not seem to support TLS: ' + str (e))
 	# }}}
 	def disconnect_cb (self, disconnect_cb): # {{{
 		self._disconnect_cb = disconnect_cb
@@ -188,6 +180,9 @@ class Socket: # {{{
 		ret = ''
 		try:
 			ret = self.socket.recv (maxsize)
+			if hasattr (self.socket, 'pending'):
+				while self.socket.pending ():
+					ret += self.socket.recv (maxsize)
 		except:
 			log ('Error reading from socket: %s' % sys.exc_value)
 			self.close ()
