@@ -394,7 +394,7 @@ if have_glib:	# {{{
 				try:
 					new_socket = (ssl.wrap_socket (new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls_cert, keyfile = self.tls_key), new_socket[1])
 				except ssl.SSLError, e:
-					log ('Rejecting non-TLS connection for %s: %s' % (repr (new_socket[1]), str (e)))
+					log ('Rejecting (non-TLS?) connection for %s: %s' % (repr (new_socket[1]), str (e)))
 					return True
 			s = Socket (new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect (s, data))
 			self.connections.add (s)
@@ -422,80 +422,28 @@ if have_glib:	# {{{
 				self.close ()
 		def _tls_init (self):
 			# Set up members for using tls, if requested.
-			if self.tls is None:
-				# Use tls if possible; warn if impossible.
-				tlsconfig = xdgbasedir.config_load (None, 'network', {'tls-name': '', 'tls-key': '', 'tls-cert': ''}, os.getenv ('NETWORK_OPTS', '').split ())
-				if tlsconfig['tls-name'] == '' and (tlsconfig['tls-cert'] == '' or tlsconfig['tls-key'] == ''):
-					# There is no good default for this; warn and disable tls.
-					log ('''\
-No hostname for tls was specified.  This setting does not have a default.
-Encryption is disabled as a result.
-
-To solve this, set the tls hostname using
-export NETWORK_OPTS="--tls-name=hostname.example.com --saveconfig"
-
-Then run the program again.  Use the hostname at which you want
-clients to connect to you.
-
-You only need to do this once; the saveconfig option will store the name.
-For a one time change, omit --saveconfig.''')
-					self.tls = False
-					return
-				if tlsconfig['tls-cert'] == '':
-					f = xdgbasedir.data_files_read (os.path.join ('certs', tlsconfig['tls-name'].replace (os.extsep, '_') + os.extsep + 'crt'), 'network')
-					if len (f) == 0:
-						# TODO: finish openssl command.
-						log ('''\
-No certificate file for tls was found.  Encryption is disabled as a result.
-
-To solve this, create a self-signed key and certificate using
-openssl req -x509 -nodes -days 365 -newkey rsa:4096 -keyout host.key -out host.crt
-
-The only important question that is asked is for the Common Name.  Answer this
-with the hostname that people will connect to or they will get errors that the
-certificate doesn't match the host they connect to.
-
-Place the key in your data path, normally that is:
-~/.local/share/network/keys/hostname_example_com.key
-
-When creating the path, make sure that the keys subdirectory has no read or
-execute rights for anyone except the user (you).
-
-Better than using a self-signed certificate, is to get it signed by a trusted
-third party.  You can do this for free at http://cacert.com (but they are not
-trusted by everyone, so it may not be good enough for you).
-
-To do this, generate the key as above, and then create a signing request:
-openssl req -new -key host.key -out host.csr
-Send the resulting certificate signing request to the certificate authority and
-they should send you back a signed certificate.
-
-Put the resulting certificate (self-signed or other) in your data path as well,
-normally:
-~/.local/share/network/certs/hostname_example_com.crt
-
-Use the hostname for which you created the key.''')
-						self.tls = False
-						return
-					self.tls_cert = f[0]
-				else:
-					self.tls_cert = tlsconfig['tls-cert']
-				if tlsconfig['tls-key'] == '':
-					f = xdgbasedir.data_files_read (os.path.join ('keys', tlsconfig['tls-name'].replace (os.extsep, '_') + os.extsep + 'key'), 'network')
-					if len (f) == 0:
-						self.tls_key = None
-					else:
-						self.tls_key = f[0]
-				else:
-					self.tls_key = tlsconfig['tls-key']
-				self.tls = True
-			elif self.tls:
-				f = self.tls.split (':', 1)
-				self.tls_cert = f[0]
-				if len (f) == 1:
-					self.tls_key = None
-				else:
-					self.tls_key = f[1]
+			self.tls = xdgbasedir.config_load (None, 'network', {'tls': ''}, os.getenv ('NETWORK_OPTS', '').split ())['tls']
+			if self.tls == '':
+				self.tls = socket.getfqdn ()
+			elif self.tls == '.':
+				self.tls = False
+				return
+			# Use tls.
+			fc = xdgbasedir.data_files_read (os.path.join ('certs', self.tls + os.extsep + 'pem'), 'network')
+			fk = xdgbasedir.data_files_read (os.path.join ('private', self.tls + os.extsep + 'key'), 'network')
+			if len (fc) == 0 or len (fk) == 0:
+				# Create new self-signed certificate.
+				path = xdgbasedir.data_filename_write ('certs', False, 'network')
+				if not os.path.exists (path):
+					os.makedirs (path)
+				path = xdgbasedir.data_filename_write ('private', False, 'network')
+				if not os.path.exists (path):
+					os.makedirs (path, 0700)
+				os.system ('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, xdgbasedir.data_filename_write (os.path.join ('private', self.tls + os.extsep + 'key'), False, 'network'), xdgbasedir.data_filename_write (os.path.join ('certs', self.tls + os.extsep + 'pem'), False, 'network')))
+				fc = xdgbasedir.data_files_read (os.path.join ('certs', self.tls + os.extsep + 'pem'), 'network')
+				fk = xdgbasedir.data_files_read (os.path.join ('private', self.tls + os.extsep + 'key'), 'network')
+			self.tls_cert = fc[0]
+			self.tls_key = fk[0]
 	# }}}
 
 	class RPCServer: # {{{
