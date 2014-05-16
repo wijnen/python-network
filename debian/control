@@ -2,12 +2,12 @@ Source: python-network
 Section: python
 Priority: optional
 Maintainer: Bas Wijnen <wijnen@debian.org>
-Build-Depends: debhelper (>= 8), python, python-support
-Standards-Version: 3.9.3
+Build-Depends: debhelper (>= 9), python, python-support
+Standards-Version: 3.9.5
 
 Package: python-network
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, python-xdgbasedir
+Depends: ${misc:Depends}, ${python:Depends}, python-xdgbasedir, openssl
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"
