@@ -165,7 +165,7 @@ class Socket: # {{{
 		self.socket.close()
 		self.socket = None
 		if self._disconnect_cb:
-			return self._disconnect_cb(data)
+			return self._disconnect_cb(self, data)
 		return data
 	# }}}
 	def send(self, data): # {{{
@@ -178,16 +178,14 @@ class Socket: # {{{
 		if self.socket is None:
 			return ''
 		ret = ''
-		while True:
-			try:
-				extra = self.socket.recv(maxsize)
-				if extra == '':
-					break
-				ret += extra
-			except:
-				log('Error reading from socket: %s' % sys.exc_value)
-				self.close()
-				return ret
+		try:
+			ret = self.socket.recv(maxsize)
+			while self.socket.pending():
+				ret += self.socket.recv(maxsize)
+		except:
+			log('Error reading from socket: %s' % sys.exc_value)
+			self.close()
+			return ret
 		if len(ret) == 0:
 			ret = self.close()
 			if not self._disconnect_cb:
@@ -390,7 +388,7 @@ if have_glib:	# {{{
 				new_socket = self.socket.accept()
 			else:
 				new_socket = self.socket6.accept()
-			log('Accepted connection from %s; possibly attempting to set up encryption' % repr(new_socket))
+			#log('Accepted connection from %s; possibly attempting to set up encryption' % repr(new_socket))
 			if self.tls:
 				assert have_ssl
 				try:
@@ -399,16 +397,16 @@ if have_glib:	# {{{
 					log('Rejecting(non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
 					new_socket[0].shutdown(socket.SHUT_RDWR)
 					return True
-				log('Accepted TLS connection from %s' % repr(new_socket[1]))
+				#log('Accepted TLS connection from %s' % repr(new_socket[1]))
 			s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect(s, data))
 			self.connections.add(s)
 			self.obj(s)
 			return True
 		def _handle_disconnect(self, socket, data):
-			log('Closed connection to %s' % repr(socket.remote))
+			#log('Closed connection to %s' % repr(socket.remote))
 			self.connections.remove(socket)
 			if self._disconnect_cb:
-				return self._disconnect_cb(data)
+				return self._disconnect_cb(socket, data)
 			return data
 		def close(self):
 			if self.group:
