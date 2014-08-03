@@ -394,7 +394,11 @@ if have_glib:	# {{{
 				try:
 					new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls_cert, keyfile = self.tls_key), new_socket[1])
 				except ssl.SSLError, e:
-					log('Rejecting(non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
+					log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
+					new_socket[0].shutdown(socket.SHUT_RDWR)
+					return True
+				except socket.error, e:
+					log('Rejecting connection for %s: %s' % (repr(new_socket[1]), str(e)))
 					new_socket[0].shutdown(socket.SHUT_RDWR)
 					return True
 				#log('Accepted TLS connection from %s' % repr(new_socket[1]))
