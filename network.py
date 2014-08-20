@@ -19,7 +19,6 @@
 # {{{ Imports.
 import sys
 import os
-import pickle
 import socket
 import select
 import re
@@ -31,7 +30,7 @@ try:
 except:
 	have_ssl = False
 try:
-	import glib
+	from gi.repository import GLib
 	have_glib = True
 	try:
 		import avahi
@@ -53,16 +52,16 @@ except:
 #   - send data
 #   - asynchronous read
 #   - blocking read for data
-# - rpc interface
-#   - set up server with object
-#   - connect to server with object
-#   - call function(incl. return)
 
 # implementation:
 # - Server: listener, creating Sockets on accept
 # - Socket: used for connection; symmetric
-# - RPCServer, RPCSocket: wrapper with RPC interface
 # }}}
+
+if sys.version >= '3':
+	makestr = lambda x: str(x, 'utf8', 'replace') if isinstance(x, bytes) else x
+else:
+	makestr = lambda x: x
 
 def log(message): # {{{
 	t = time.strftime('%c %Z %z')
@@ -125,7 +124,7 @@ class Socket: # {{{
 			browser.connect_to_signal('ItemNew', handle)
 			browser.connect_to_signal('AllForNow', handle_eof)
 			browser.connect_to_signal('Failure', handle_eof)
-			mainloop = glib.MainLoop()
+			mainloop = GLib.MainLoop()
 			mainloop.run()
 			if self.remote is not None:
 				self.setup_connection()
@@ -152,7 +151,7 @@ class Socket: # {{{
 			try:
 				assert have_ssl
 				self.socket = ssl.wrap_socket(self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
-			except ssl.SSLError, e:
+			except ssl.SSLError as e:
 				raise TypeError('Socket does not seem to support TLS: ' + str(e))
 	# }}}
 	def disconnect_cb(self, disconnect_cb): # {{{
@@ -176,14 +175,14 @@ class Socket: # {{{
 	# }}}
 	def recv(self, maxsize = 4096): # {{{
 		if self.socket is None:
-			return ''
-		ret = ''
+			return b''
+		ret = b''
 		try:
 			ret = self.socket.recv(maxsize)
 			while self.socket.pending():
 				ret += self.socket.recv(maxsize)
 		except:
-			log('Error reading from socket: %s' % sys.exc_value)
+			log('Error reading from socket: %s' % sys.exc_info()[1])
 			self.close()
 			return ret
 		if len(ret) == 0:
@@ -195,16 +194,16 @@ class Socket: # {{{
 	def rawread(self, callback): # {{{
 		assert have_glib
 		if self.socket is None:
-			return ''
+			return b''
 		ret = self.unread()
 		self.callback = (callback, None)
-		self.event = glib.io_add_watch(self.socket.fileno(), glib.IO_IN | glib.IO_PRI, lambda fd, cond: (callback() or True))
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, lambda fd, cond: (callback() or True))
 		return ret
 	# }}}
 	def read(self, callback, maxsize = 4096): # {{{
 		assert have_glib
 		if self.socket is None:
-			return ''
+			return b''
 		first = self.unread()
 		self.maxsize = maxsize
 		self.callback = (callback, False)
@@ -216,7 +215,7 @@ class Socket: # {{{
 				return False
 			callback(data)
 			return True
-		self.event = glib.io_add_watch(self.socket.fileno(), glib.IO_IN | glib.IO_PRI, cb)
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, cb)
 		if first:
 			callback(first)
 	# }}}
@@ -227,10 +226,10 @@ class Socket: # {{{
 		self._linebuffer = self.unread()
 		self.maxsize = maxsize
 		self.callback = (callback, True)
-		self.event = glib.io_add_watch(self.socket.fileno(), glib.IO_IN | glib.IO_PRI, lambda fd, cond: (self._line_cb() or True))
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, lambda fd, cond: (self._line_cb() or True))
 	# }}}
 	def _line_cb(self): # {{{
-		self._linebuffer += self.recv(self.maxsize)
+		self._linebuffer += makestr(self.recv(self.maxsize))
 		while '\n' in self._linebuffer and self.event:
 			assert self.callback[1] is not None	# Going directly from readlines() to rawread() is not allowed.
 			if self.callback[1]:
@@ -239,85 +238,16 @@ class Socket: # {{{
 			else:
 				data = self._linebuffer
 				self._linebuffer = ''
-				self.callback[0] (self._linebuffer)
+				self.callback[0](data)
 	# }}}
 	def unread(self): # {{{
 		if self.event:
-			glib.source_remove(self.event)
+			GLib.source_remove(self.event)
 			self.event = None
 		ret = self._linebuffer
 		self._linebuffer = ''
 		return ret
 	# }}}
-# }}}
-
-class RPCSocket(object): # {{{
-	def __init__(self, address, object = None, tls = True, disconnected = None):
-		self._object = object
-		self._disconnected = disconnected
-		if isinstance(address, Socket):
-			self._socket = address
-		else:
-			self._socket = Socket(address, tls)
-		self._socket.rawread(self._cb)
-	def __getattr__(self, attr):
-		if attr == '__methods__':
-			return self._call('__methods__', [], {})
-		ret = lambda *arg, **karg: self._call(attr, arg, karg)
-		ret.__doc__ = self._call('__doc__', [attr], {})
-		return ret
-	def _call(self, attr, arg, karg):
-		self._send((attr, arg, karg))
-		while True:
-			ret = self._recv()
-			if len(ret) == 2:
-				r, v = ret
-				break
-			self._handle_recv(ret)
-		if r == 'E':
-			log('exception: %s\n%s' % (v[0], '\n'.join('\t%s:%d' % (x[0], x[1]) for x in v[1])))
-			raise v[0]
-		else:
-			return v
-	def _send(self, data):
-		d = pickle.dumps(data)
-		self._socket.send('%20d' % len(d) + d)
-	def _recv(self):
-		d = self._socket.recv(20)
-		if len(d) == 0:
-			raise EOFError("EOF at start of frame")
-		l = int(d)
-		data = ''
-		while len(data) < l:
-			data += self._socket.recv(l - len(data))
-		return pickle.loads(data)
-	def _cb(self):
-		try:
-			data = self._recv()
-		except EOFError:
-			if self._disconnected:
-				self._disconnected()
-			return False
-		self._handle_recv(data)
-		return True
-	def _handle_recv(self, data):
-		attr, a, ka = data
-		try:
-			if attr == '__methods__':
-				ret = [x for x in dir(self._object) if not x.startswith('_') and callable(getattr(self._object, x))]
-			elif attr == '__doc__':
-				ret = getattr(self._object, a[0]).__doc__
-			else:
-				assert attr != '' and attr[0] != '_'
-				ret = getattr(self._object, attr) (*a, **ka)
-			self._send(('R', ret))
-		except:
-			t = sys.exc_traceback
-			tb = []
-			while t:
-				tb.append((t.tb_frame.f_code.co_filename, t.tb_lineno))
-				t = t.tb_next
-			self._send(('E', (sys.exc_value, tb)))
 # }}}
 
 if have_glib:	# {{{
@@ -377,10 +307,10 @@ if have_glib:	# {{{
 					self.ipv6 = True
 				self.port = port
 			fd = self.socket.fileno()
-			glib.io_add_watch(fd, glib.IO_IN | glib.IO_PRI, self._cb)
+			GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI, self._cb)
 			if self.ipv6:
 				fd = self.socket6.fileno()
-				glib.io_add_watch(fd, glib.IO_IN | glib.IO_PRI, self._cb)
+				GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI, self._cb)
 		def set_disconnect_cb(self, disconnect_cb):
 			self._disconnect_cb = disconnect_cb
 		def _cb(self, fd, cond):
@@ -393,11 +323,11 @@ if have_glib:	# {{{
 				assert have_ssl
 				try:
 					new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls_cert, keyfile = self.tls_key), new_socket[1])
-				except ssl.SSLError, e:
+				except ssl.SSLError as e:
 					log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
 					new_socket[0].shutdown(socket.SHUT_RDWR)
 					return True
-				except socket.error, e:
+				except socket.error as e:
 					log('Rejecting connection for %s: %s' % (repr(new_socket[1]), str(e)))
 					new_socket[0].shutdown(socket.SHUT_RDWR)
 					return True
@@ -445,7 +375,7 @@ if have_glib:	# {{{
 					os.makedirs(path)
 				path = xdgbasedir.data_filename_write('private', False, 'network')
 				if not os.path.exists(path):
-					os.makedirs(path, 0700)
+					os.makedirs(path, 0o700)
 				path = xdgbasedir.data_filename_write('csr', False, 'network')
 				if not os.path.exists(path):
 					os.makedirs(path)
@@ -458,30 +388,15 @@ if have_glib:	# {{{
 				fk = xdgbasedir.data_files_read(os.path.join('private', self.tls + os.extsep + 'key'), 'network')
 			self.tls_cert = fc[0]
 			self.tls_key = fk[0]
-			print fc[0], fk[0]
+			#print(fc[0], fk[0])
 	# }}}
 
-	class RPCServer: # {{{
-		def __init__(self, port, factory, disconnected = None, address = '', backlog = 5, tls = None):
-			self.tls = tls
-			self.factory = factory
-			self.disconnected = disconnected
-			self.server = Server(port, self._accept, address, backlog, None)
-		def close(self):
-			self.server.close()
-		def _accept(self, socket):
-			rpc = RPCSocket(socket, None, self.tls)
-			rpc._object = self.factory(rpc)
-			if self.disconnected is not None:
-				rpc._disconnected = lambda: self.disconnected(rpc)
-	# }}}
-
-	loop = None
+	_loop = None
 	def fgloop(): # {{{
-		global loop
-		assert loop is None
-		loop = glib.MainLoop()
-		loop.run()
+		global _loop
+		assert _loop is None
+		_loop = GLib.MainLoop()
+		_loop.run()
 	# }}}
 
 	def bgloop(): # {{{
@@ -494,13 +409,13 @@ if have_glib:	# {{{
 	# }}}
 
 	def endloop(): # {{{
-		global loop
-		assert loop is not None
-		loop.quit()
-		loop = None
+		global _loop
+		assert _loop is not None
+		_loop.quit()
+		_loop = None
 	# }}}
 
 	def iteration(): # {{{
-		glib.MainContext().iteration(False)
+		GLib.MainContext().iteration(False)
 	# }}}
 # }}}
