@@ -8,6 +8,7 @@ Standards-Version: 3.9.5
 Package: python-network
 Architecture: all
 Depends: ${misc:Depends}, ${python:Depends}, python-xdgbasedir, openssl
+Recommends: python-gi
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"
@@ -25,6 +26,7 @@ Description: python module for easy networking
 Package: python3-network
 Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}, python3-xdgbasedir, openssl
+Recommends: python3-gi
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"

@@ -30,7 +30,10 @@ try:
 except:
 	have_ssl = False
 try:
-	from gi.repository import GLib
+	try:
+		from gi.repository import GLib
+	except ImportError:
+		import glib as GLib
 	have_glib = True
 	try:
 		import avahi
@@ -325,11 +328,19 @@ if have_glib:	# {{{
 					new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self.tls_cert, keyfile = self.tls_key), new_socket[1])
 				except ssl.SSLError as e:
 					log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
-					new_socket[0].shutdown(socket.SHUT_RDWR)
+					try:
+						new_socket[0].shutdown(socket.SHUT_RDWR)
+					except:
+						# Ignore errors here.
+						pass
 					return True
 				except socket.error as e:
 					log('Rejecting connection for %s: %s' % (repr(new_socket[1]), str(e)))
-					new_socket[0].shutdown(socket.SHUT_RDWR)
+					try:
+						new_socket[0].shutdown(socket.SHUT_RDWR)
+					except:
+						# Don't care about errors on shutdown.
+						pass
 					return True
 				#log('Accepted TLS connection from %s' % repr(new_socket[1]))
 			s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect(s, data))
