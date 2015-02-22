@@ -66,9 +66,17 @@ if sys.version >= '3':
 else:
 	makestr = lambda x: x
 
+log_output = sys.stderr
+
+def set_log_output(file): # {{{
+	global log_output
+	log_output = file
+# }}}
+
 def log(message): # {{{
 	t = time.strftime('%c %Z %z')
-	sys.stderr.write(''.join(['%s: %s\n' % (t, m) for m in message.split('\n')]))
+	log_output.write(''.join(['%s: %s\n' % (t, m) for m in message.split('\n')]))
+	log_output.flush()
 # }}}
 
 def lookup(service): # {{{
