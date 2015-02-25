@@ -378,30 +378,30 @@ if have_glib:	# {{{
 				self.close()
 		def _tls_init(self):
 			# Set up members for using tls, if requested.
-			self.tls = fhs.load_config(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
+			self.tls = fhs.init(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
 			if self.tls == '':
 				self.tls = socket.getfqdn()
 			elif self.tls == '-':
 				self.tls = False
 				return
 			# Use tls.
-			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
-			fk = fhs.data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
+			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
+			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
 			if fc is None or fk is None:
 				# Create new self-signed certificate.
 				path = os.path.join(fhs.write_data(dir = True, packagename = 'network'), 'private')
 				if not os.path.exists(path):
 					os.makedirs(path, 0o700)
-				keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
-				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
-				csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), packagename = 'network')
+				keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
+				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
+				csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), packagename = 'network', opened = False)
 				os.system('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, keyfile, certfile))
 				os.system('openssl req -subj "/CN=%s" -new -key "%s" -out "%s"' % (self.tls, keyfile, csrfile))
-				fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
-				fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
-			self.tls_cert = fc[0]
-			self.tls_key = fk[0]
-			#print(fc[0], fk[0])
+				fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
+				fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
+			self.tls_cert = fc
+			self.tls_key = fk
+			#print(fc, fk)
 	# }}}
 
 	_loop = None
