@@ -23,7 +23,7 @@ import socket
 import select
 import re
 import time
-import xdgbasedir
+import fhs
 try:
 	import ssl
 	have_ssl = True
@@ -378,33 +378,27 @@ if have_glib:	# {{{
 				self.close()
 		def _tls_init(self):
 			# Set up members for using tls, if requested.
-			self.tls = xdgbasedir.config_load(None, 'network', {'tls': ''}, os.getenv('NETWORK_OPTS', '').split())['tls']
+			self.tls = fhs.load_config(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
 			if self.tls == '':
 				self.tls = socket.getfqdn()
-			elif self.tls == '.':
+			elif self.tls == '-':
 				self.tls = False
 				return
 			# Use tls.
-			fc = xdgbasedir.data_files_read(os.path.join('certs', self.tls + os.extsep + 'pem'), 'network')
-			fk = xdgbasedir.data_files_read(os.path.join('private', self.tls + os.extsep + 'key'), 'network')
-			if len(fc) == 0 or len(fk) == 0:
+			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
+			fk = fhs.data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
+			if fc is None or fk is None:
 				# Create new self-signed certificate.
-				path = xdgbasedir.data_filename_write('certs', False, 'network')
-				if not os.path.exists(path):
-					os.makedirs(path)
-				path = xdgbasedir.data_filename_write('private', False, 'network')
+				path = os.path.join(fhs.write_data(dir = True, packagename = 'network'), 'private')
 				if not os.path.exists(path):
 					os.makedirs(path, 0o700)
-				path = xdgbasedir.data_filename_write('csr', False, 'network')
-				if not os.path.exists(path):
-					os.makedirs(path)
-				keyfile = xdgbasedir.data_filename_write(os.path.join('private', self.tls + os.extsep + 'key'), False, 'network')
-				certfile = xdgbasedir.data_filename_write(os.path.join('certs', self.tls + os.extsep + 'pem'), False, 'network')
-				csrfile = xdgbasedir.data_filename_write(os.path.join('csr', self.tls + os.extsep + 'csr'), False, 'network')
+				keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
+				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
+				csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), packagename = 'network')
 				os.system('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, keyfile, certfile))
 				os.system('openssl req -subj "/CN=%s" -new -key "%s" -out "%s"' % (self.tls, keyfile, csrfile))
-				fc = xdgbasedir.data_files_read(os.path.join('certs', self.tls + os.extsep + 'pem'), 'network')
-				fk = xdgbasedir.data_files_read(os.path.join('private', self.tls + os.extsep + 'key'), 'network')
+				fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network')
+				fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network')
 			self.tls_cert = fc[0]
 			self.tls_key = fk[0]
 			#print(fc[0], fk[0])

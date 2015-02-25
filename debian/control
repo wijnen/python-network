@@ -3,11 +3,11 @@ Section: python
 Priority: optional
 Maintainer: Bas Wijnen <wijnen@debian.org>
 Build-Depends-Indep: debhelper (>= 9), python-all, python3-all, dh-python
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 
 Package: python-network
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, python-xdgbasedir, openssl
+Depends: ${misc:Depends}, ${python:Depends}, python-fhs, openssl
 Recommends: python-gi
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
@@ -25,7 +25,7 @@ Description: python module for easy networking
 
 Package: python3-network
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, python3-xdgbasedir, openssl
+Depends: ${misc:Depends}, ${python3:Depends}, python3-fhs, openssl
 Recommends: python3-gi
 Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
