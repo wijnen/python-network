@@ -95,7 +95,7 @@ class Socket: # {{{
 		self.remote = remote
 		self._disconnect_cb = disconnect_cb
 		self.event = None
-		self._linebuffer = ''
+		self._linebuffer = b''
 		if isinstance(address, socket.socket):
 			self.socket = address
 			return
@@ -240,15 +240,16 @@ class Socket: # {{{
 		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, lambda fd, cond: (self._line_cb() or True))
 	# }}}
 	def _line_cb(self): # {{{
-		self._linebuffer += makestr(self.recv(self.maxsize))
-		while '\n' in self._linebuffer and self.event:
+		self._linebuffer += self.recv(self.maxsize)
+		while b'\n' in self._linebuffer and self.event:
 			assert self.callback[1] is not None	# Going directly from readlines() to rawread() is not allowed.
 			if self.callback[1]:
-				line, self._linebuffer = self._linebuffer.split('\n', 1)
+				line, self._linebuffer = self._linebuffer.split(b'\n', 1)
+				line = makestr(line)
 				self.callback[0] (line)
 			else:
-				data = self._linebuffer
-				self._linebuffer = ''
+				data = makestr(self._linebuffer)
+				self._linebuffer = b''
 				self.callback[0](data)
 	# }}}
 	def unread(self): # {{{
@@ -256,7 +257,7 @@ class Socket: # {{{
 			GLib.source_remove(self.event)
 			self.event = None
 		ret = self._linebuffer
-		self._linebuffer = ''
+		self._linebuffer = b''
 		return ret
 	# }}}
 # }}}
