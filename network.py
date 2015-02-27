@@ -386,20 +386,24 @@ if have_glib:	# {{{
 				self.tls = False
 				return
 			# Use tls.
-			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
-			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
+			fc = fhs.read_data(os.path.join('network', 'certs', self.tls + os.extsep + 'pem'), opened = False)
+			fk = fhs.read_data(os.path.join('network', 'private', self.tls + os.extsep + 'key'), opened = False)
 			if fc is None or fk is None:
 				# Create new self-signed certificate.
-				path = os.path.join(fhs.write_data(dir = True, packagename = 'network'), 'private')
+				certfile = fhs.write_data(os.path.join('network', 'certs', self.tls + os.extsep + 'pem'), opened = False)
+				csrfile = fhs.write_data(os.path.join('network', 'csr', self.tls + os.extsep + 'csr'), opened = False)
+				for p in (certfile, csrfile):
+					path = os.path.dirname(p)
+					if not os.path.exists(path):
+						os.makedirs(path)
+				keyfile = fhs.write_data(os.path.join('network', 'private', self.tls + os.extsep + 'key'), opened = False)
+				path = os.path.dirname(keyfile)
 				if not os.path.exists(path):
 					os.makedirs(path, 0o700)
-				keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
-				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
-				csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), packagename = 'network', opened = False)
 				os.system('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, keyfile, certfile))
 				os.system('openssl req -subj "/CN=%s" -new -key "%s" -out "%s"' % (self.tls, keyfile, csrfile))
-				fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), packagename = 'network', opened = False)
-				fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), packagename = 'network', opened = False)
+				fc = fhs.read_data(os.path.join('network', 'certs', self.tls + os.extsep + 'pem'), opened = False)
+				fk = fhs.read_data(os.path.join('network', 'private', self.tls + os.extsep + 'key'), opened = False)
 			self.tls_cert = fc
 			self.tls_key = fk
 			#print(fc, fk)
