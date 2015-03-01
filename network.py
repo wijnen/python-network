@@ -387,7 +387,7 @@ if have_glib:	# {{{
 				return
 			# Use tls.
 			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
-			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False)
+			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
 			if fc is None or fk is None:
 				# Create new self-signed certificate.
 				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
