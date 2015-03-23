@@ -190,8 +190,9 @@ class Socket: # {{{
 		ret = b''
 		try:
 			ret = self.socket.recv(maxsize)
-			while self.socket.pending():
-				ret += self.socket.recv(maxsize)
+			if hasattr(self.socket, 'pending'):
+				while self.socket.pending():
+					ret += self.socket.recv(maxsize)
 		except:
 			log('Error reading from socket: %s' % sys.exc_info()[1])
 			self.close()
@@ -379,7 +380,11 @@ if have_glib:	# {{{
 				self.close()
 		def _tls_init(self):
 			# Set up members for using tls, if requested.
-			self.tls = fhs.init(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
+			if self.tls in (False, '-'):
+				self.tls = False
+				return
+			if self.tls in (None, True, ''):
+				self.tls = fhs.init(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
 			if self.tls == '':
 				self.tls = socket.getfqdn()
 			elif self.tls == '-':
