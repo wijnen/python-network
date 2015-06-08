@@ -89,6 +89,32 @@ def lookup(service): # {{{
 	return int(service)
 # }}}
 
+class Fake: # {{{
+	def __init__(self, i, o):
+		self.i = i
+		self.o = o
+	def close(self):
+		pass
+	def sendall(self, data):
+		while len(data) > 0:
+			ret = os.write(self.o, data)
+			if ret >= 0:
+				data = data[ret:]
+				continue
+			log('network.py: Failed to write data')
+			traceback.print_exc()
+	def recv(self, maxsize):
+		#log('recv fake')
+		return os.read(self.i.fileno(), maxsize)
+	def fileno(self):
+		# For reading.
+		return self.i.fileno()
+# }}}
+
+def wrap(i, o): # {{{
+	return Socket(Fake(i, o))
+# }}}
+
 class Socket: # {{{
 	def __init__(self, address, tls = None, disconnect_cb = None, remote = None): # {{{
 		self.tls = tls
@@ -96,7 +122,8 @@ class Socket: # {{{
 		self._disconnect_cb = disconnect_cb
 		self.event = None
 		self._linebuffer = b''
-		if isinstance(address, socket.socket):
+		if isinstance(address, (Fake, socket.socket)):
+			#log('new %d' % id(address))
 			self.socket = address
 			return
 		if isinstance(address, str) and '/' in address:
@@ -170,12 +197,12 @@ class Socket: # {{{
 	# }}}
 	def close(self): # {{{
 		if not self.socket:
-			return
+			return b''
 		data = self.unread()
 		self.socket.close()
 		self.socket = None
 		if self._disconnect_cb:
-			return self._disconnect_cb(self, data)
+			return self._disconnect_cb(self, data) or b''
 		return data
 	# }}}
 	def send(self, data): # {{{
@@ -184,8 +211,15 @@ class Socket: # {{{
 		#print 'sending %s' % repr(data)
 		self.socket.sendall(data)
 	# }}}
+	def sendline(self, data): # {{{
+		if self.socket is None:
+			return
+		#print 'sending %s' % repr(data)
+		self.socket.sendall((data + '\n').encode('utf8'))
+	# }}}
 	def recv(self, maxsize = 4096): # {{{
 		if self.socket is None:
+			log('ignoring recv on closed socket')
 			return b''
 		ret = b''
 		try:
@@ -209,7 +243,7 @@ class Socket: # {{{
 			return b''
 		ret = self.unread()
 		self.callback = (callback, None)
-		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, lambda fd, cond: (callback() or True))
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, lambda fd, cond: (callback() or True))
 		return ret
 	# }}}
 	def read(self, callback, maxsize = 4096): # {{{
@@ -221,13 +255,12 @@ class Socket: # {{{
 		self.callback = (callback, False)
 		def cb(fd, cond):
 			data = self.recv(self.maxsize)
-			#print('network read %d bytes' % len(data))
+			#log('network read %d bytes' % len(data))
 			if not self.event:
-				#print('stopping')
 				return False
 			callback(data)
 			return True
-		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, cb)
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, cb)
 		if first:
 			callback(first)
 	# }}}
@@ -238,7 +271,7 @@ class Socket: # {{{
 		self._linebuffer = self.unread()
 		self.maxsize = maxsize
 		self.callback = (callback, True)
-		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI, lambda fd, cond: (self._line_cb() or True))
+		self.event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, lambda fd, cond: (self._line_cb() or True))
 	# }}}
 	def _line_cb(self): # {{{
 		self._linebuffer += self.recv(self.maxsize)
@@ -320,10 +353,10 @@ if have_glib:	# {{{
 					self.ipv6 = True
 				self.port = port
 			fd = self.socket.fileno()
-			GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI, self._cb)
+			GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, self._cb)
 			if self.ipv6:
 				fd = self.socket6.fileno()
-				GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI, self._cb)
+				GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, self._cb)
 		def set_disconnect_cb(self, disconnect_cb):
 			self._disconnect_cb = disconnect_cb
 		def _cb(self, fd, cond):
@@ -353,7 +386,7 @@ if have_glib:	# {{{
 						pass
 					return True
 				#log('Accepted TLS connection from %s' % repr(new_socket[1]))
-			s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = lambda data: self._handle_disconnect(s, data))
+			s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self._handle_disconnect)
 			self.connections.add(s)
 			self.obj(s)
 			return True
