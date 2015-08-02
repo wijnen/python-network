@@ -7,8 +7,6 @@ This module provides 4 clases for networking support from Python:
 
 Socket
 Server
-RPCSocket
-RPCServer
 
 Additionally, there are two convenience functions, bgloop and fgloop, which
 will enter the glib main loop.  Before that, bgloop will fork, so it returns
@@ -16,9 +14,8 @@ control of the terminal to the calling application.  When starting servers this
 is useful: it will only return after the server is running, so there is no race
 condition for "the server was started, but not accepting connections yet".
 
-The Socket and RPCSocket classes are the connection objects. Server and
-RPCServer wait for connections and create the corresponding sockets as calls
-come in.
+Instances of the Socket class are the connection objects. Server objects wait
+for connections and create the corresponding sockets as calls come in.
 
 Socket addresses can have several types. For connecting (client side), they may
 be:
@@ -43,80 +40,67 @@ In all cases, port may be a number or a service name from /etc/services.
 
 Interface:
 
-s = socket.Socket (address, tls = True, disconnect_cb = None)
+s = network.Socket (address, tls = True, disconnect_cb = None)
 	# Create a socket, connect to address.
 	# If tls is True, TLS will be used to create a secure socket.
 	# If disconnect_cb is a function, it is called (with leftover data as
 	# 	argument) when the socket is closed.  If not set, it will
 	# 	raise EOFError when the socket closes.
-s.disconnect_cb (cb)
+s.disconnect_cb(cb)
 	# Set or change disconnect_cb.  Set to None to raise EOFError on close.
-s.close ()
+s.close()
 	# Close connection.
-s.send (data)
+s.send(data)
 	# Send a string of data.
-data = s.recv (maxsize = 4096)
+data = s.recv(maxsize = 4096)
 	# Receive at most maxsize bytes.
-s.read (callback, maxsize = 4096)
-	# Wait for data, read it, and call the callback when it arrives.
-s.rawread (callback)
-	# Call callback when data is ready; don't read it.
-s.readlines (callback, maxsize = 4096):
-	# Call callback for each line of data that arrives ('\n'-separated).
+s.read(callback, maxsize = 4096)
+	# Let the main loop wait for data, read it, and call the callback when it arrives.
+s.rawread(callback)
+	# Like read, but don't read the data.
+s.readlines(callback, maxsize = 4096):
+	# Like read, but the data is buffered and the callback is called once
+	# per received line ('\n'-separated).
 	# The newline is not passed to the callback.
-data = s.unread ()
-	# Stop read callback; return any unparsed data (readlines only).
+data = s.unread()
+	# Stop read callback; return any unparsed data from the readlines buffer.
 
-s = socket.Server (port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None)
+s = network.Server(port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None)
 	# Start a server. When a new connection is accepted, obj is called with
 	# the resulting socket.  You will normally want obj to be a class, so a
 	# new object is constructed for each connection.  In its constructor,
-	# you should then set a read callback.  connection is accepted.
-	# address is the address to listen on (default everything).  backlog is
-	# the number of connections to allow in the queue while the server
-	# didn't accept them yet.  If you want to use TLS for secure sockets,
-	# you must set tls to the file containing the server's private key and
-	# certificate.
-s.disconnect_cb (cb)
+	# you should then set a read callback.
+	# address is the address to listen on (default everything; it can be
+	# set to '0.0.0.0' to disable IPv6, to '127.0.0.1' to limit connections
+	# to localhost, etc.)
+	# backlog is the number of connections to allow in the queue while the
+	# server didn't accept them yet.
+	# If tls is False, the connection will not be encrypted.  Otherwise it
+	# will be; a certificate will be created if there is none in the
+	# configuration directory (normally ~/.local/share/network/*/).
+s.disconnect_cb(cb)
 	# Set a new disconnect callback.
-s.close ()
+s.close()
 	# Stop the server.
-s = socket.RPCSocket (address, object = None, disconnected = None)
-	# Create a new RPC socket and connect to an RPC server. When calling
-	# methods on this object, they are proxied to the server object. When
-	# the server calls methods on its object, they are called here.  In
-	# both cases, the result (both when it's a return value and when it's
-	# an exception) is passed on the the caller. The methods must not start
-	# with an underscore.
-
-s = socket.RPCServer (port, factory, disconnected = None, address = '0.0.0.0',
-	backlog = 5)
-			# Start a server. When a connection is accepted,
-			# factory is called. It must return an object which can
-			# be used to build an RPCSocket. In particular, factory
-			# may be a class, which means calling it invokes the
-			# constructor and returns the new instance.
-			# disconnected, if set, is called when a connection is
-			# lost.
-			# address and backlog have the same function as for
-			# socket.Server.
 
 Callback signatures:
-Socket.read: cb (string)
-Socket.rawread: cb ()
-Socket.readlines: cb (line)	# not containing newline.
-Server.obj: cb (socket)
-RPCSocket (disconnected): cb ()
-RPCServer (disconnected): cb (socket)
+Socket.read: cb(bytes)
+Socket.rawread: cb()
+Socket.readlines: cb(str)	# does not contain newline.
+Server.obj: cb(Socket)
 
-When a socket is disconnected, the remote end raises EOFError. However, an
-RPCServer and RPCSocket do not: they call their callback and otherwise ignore
-the event. If they are disconnected in the middle of a transaction, they do
-raise EOFError.
+When a socket is disconnected, the remote end calls disconnect_cb if set,
+otherwise it raises EOFError.  Disconnect_cb can be unset by calling it with
+None.
 
 All callbacks (listening, client receiving) are triggered by the glib main
-loop, so that must be running to receive the events. Gtk uses the same main
-loop, so any gtk program will not need to do anything special.
+loop, so that must be running to receive the events.  {fg,bg}loop() are
+provided so programs using this module don't need to import glib itself.  Gtk
+uses the same main loop, so any gtk program will not need to do anything
+special.
+
+The server and avahi code will be disabled if the respective modules are not
+available.
 
 Simple example for the servers.
 ------------------------------------------------------------------------------
@@ -125,27 +109,17 @@ Simple example for the servers.
 import network
 
 class Object:
-	def __init__ (self, socket):
+	def __init__(self, socket):
 		self.socket = socket
-		self.socket.send ('Welcome to this server!')
-		self.socket.readlines (line)
-	def line (self, l):
-		print ('data received: %s' % l)
-		self.socket.send ('This is a reply.')
+		self.socket.send('Welcome to this server!')
+		self.socket.readlines(line)
+	def line(self, l):
+		print('data received: %s' % l)
+		self.socket.send('This is a reply.')
 
-class Provider:
-	def __init__ (self, socket):
-		self.socket = socket
-	def action (self, argument):
-		print ('The series of statements intended to establish a '
-			'proposition is: %s', str (argument))
-		self.socket.complain ()	# Call a function on the connected object.
-		return 'Nonsense.'
+server = network.Server(1234, Object)
 
-server = network.Server (1234, Object, tls = 'key.pem')
-rpcserver = network.RPCServer ('demo|Demonstration server', Provider, tls = 'key.pem')
-
-network.fgloop ()
+network.fgloop()
 ------------------------------------------------------------------------------
 
 And for the clients.
@@ -154,16 +128,7 @@ And for the clients.
 # example for network clients.
 import network
 
-client = network.Socket ('localhost:1234')
-client.send ('This is data.')
-print ('The server replied: %s' % client.recv ())
-
-class Client:
-	def complain (self):
-		print ('What a stupid concept...')
-
-rpcclient = network.RPCSocket ('demo|', Client ())
-
-print ('The server responds with %s to the action.'
-	% rpcclient.action ('Yes, it is!'))
+client = network.Socket('localhost:1234')
+client.send('This is data.')
+print('The server replied: %s' % client.recv())
 ------------------------------------------------------------------------------
