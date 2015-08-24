@@ -219,8 +219,8 @@ class Socket: # {{{
 	# }}}
 	def recv(self, maxsize = 4096): # {{{
 		if self.socket is None:
-			log('ignoring recv on closed socket')
-			return b''
+			log('recv on closed socket')
+			raise EOFError('recv on closed socket')
 		ret = b''
 		try:
 			ret = self.socket.recv(maxsize)
@@ -448,11 +448,19 @@ if have_glib:	# {{{
 	# }}}
 
 	_loop = None
-	def fgloop(): # {{{
+	def fgloop(timeout = None): # {{{
 		global _loop
 		assert _loop is None
 		_loop = GLib.MainLoop()
+		notify = []
+		if timeout is not None:
+			_timeout = GLib.timeout_add(timeout * 1000, lambda: notify.append(True) or (endloop() and False))
 		_loop.run()
+		if len(notify) > 0:
+			return True
+		if timeout is not None:
+			GLib.source_remove(_timeout)
+		return False
 	# }}}
 
 	def bgloop(): # {{{
