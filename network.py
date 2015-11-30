@@ -24,6 +24,8 @@ import select
 import re
 import time
 import fhs
+fhs.module_init('network', {'tls': ''})
+
 try:
 	import ssl
 	have_ssl = True
@@ -417,7 +419,7 @@ if have_glib:	# {{{
 				self.tls = False
 				return
 			if self.tls in (None, True, ''):
-				self.tls = fhs.init(packagename = 'network', config = {'tls': ''}, argv = os.getenv('NETWORK_OPTS', '').split())['tls']
+				self.tls = fhs.module_get_config('network')['tls']
 			if self.tls == '':
 				self.tls = socket.getfqdn()
 			elif self.tls == '-':
