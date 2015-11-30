@@ -1,5 +1,11 @@
-python-network (0.1-1) UNRELEASED; urgency=low
+python-network (0.2-1) UNRELEASED; urgency=medium
+
+  * New release.
+
+ -- Bas Wijnen <wijnen@debian.org>  Mon, 30 Nov 2015 11:27:01 -0500
+
+python-network (0.1-1) unstable; urgency=medium
 
   * Initial release. (Closes: #686357)
 
- -- Bas Wijnen <wijnen@debian.org>  Wed, 08 Oct 2014 01:43:23 -0400
+ -- Bas Wijnen <wijnen@debian.org>  Mon, 30 Nov 2015 11:25:46 -0500
