@@ -5,6 +5,10 @@ export PYBUILD_NAME = network
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+override_dh_auto_build:
+	dh_auto_build
+	doxygen config.doxygen
+
 override_dh_auto_clean:
 	dh_auto_clean
-	rm -r doxygen-output
+	rm -rf doxygen-output
