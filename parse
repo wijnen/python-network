@@ -1,0 +1,6 @@
+#!/bin/sh
+
+tmp="`mktemp`"
+sed -e 's/:\s*#\s*{{{\s*$/:/' < "$1" > "$tmp"
+doxypy --autobrief "$tmp"
+rm "$tmp"
