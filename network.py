@@ -402,7 +402,7 @@ class Socket: # {{{
 		self._event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, lambda fd, cond: (self._line_cb() or True))
 	# }}}
 	def _line_cb(self): # {{{
-		self._linebuffer += self.recv(self.maxsize)
+		self._linebuffer += self.recv(self._maxsize)
 		while b'\n' in self._linebuffer and self._event:
 			assert self._callback[1] is not None	# Going directly from readlines() to rawread() is not allowed.
 			if self._callback[1]:
