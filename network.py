@@ -1,10 +1,36 @@
 # vim: set fileencoding=utf-8 foldmethod=marker :
 
-'''Python module for easy networking.
+# {{{ Copyright 2013-2016 Bas Wijnen <wijnen@debian.org>
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or(at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# }}}
+
+'''@mainpage
+Python-network is a module which intends to make networking easy.  It supports
+unix domain sockets and TLS encryption.  Connection targets can be specified in
+several ways.  Avahi is supported if it is detected.
+'''
+
+'''@file
+Python module for easy networking.  This module intends to make networking
+easy.  It supports unix domain sockets and TLS encryption.  Connection targets
+can be specified in several ways.  Avahi is supported if it is detected.
+'''
+
+'''@package network Python module for easy networking.
 This module intends to make networking easy.  It supports unix domain sockets
-and TLS encryption.  Connection targets can be specified in several ways.  GLib
-is used for all callbacks, so it must be installed for them to work.  Avahi is
-supported if it is detected.
+and TLS encryption.  Connection targets can be specified in several ways.
+Avahi is supported if it is detected.
 '''
 
 # {{{ Copyright 2012 Bas Wijnen <wijnen@debian.org>
@@ -23,6 +49,7 @@ supported if it is detected.
 # }}}
 
 # {{{ Imports.
+import math
 import sys
 import os
 import socket
@@ -38,21 +65,12 @@ try:
 except:
 	have_ssl = False
 try:
-	try:
-		from gi.repository import GLib
-	except ImportError:
-		import glib as GLib
-	have_glib = True
-	try:
-		import avahi
-		import dbus
-		from dbus.mainloop.glib import DBusGMainLoop
-		have_avahi = True
-	except:
-		have_avahi = False
+	import avahi
+	import dbus
+	from dbus.mainloop.glib import DBusGMainLoop
+	have_avahi = True
 except:
 	have_avahi = False
-	have_glib = False
 # }}}
 
 # {{{ Interface description
@@ -231,6 +249,7 @@ class Socket: # {{{
 			browser.connect_to_signal('ItemNew', handle)
 			browser.connect_to_signal('AllForNow', handle_eof)
 			browser.connect_to_signal('Failure', handle_eof)
+			# TODO: avahi without GLib.
 			mainloop = GLib.MainLoop()
 			mainloop.run()
 			if self.remote is not None:
@@ -339,7 +358,7 @@ class Socket: # {{{
 				raise EOFError('network connection closed')
 		return ret
 	# }}}
-	def rawread(self, callback): # {{{
+	def rawread(self, callback, error = None): # {{{
 		'''Register function to be called when data is ready for reading.
 		The function will be called when data is ready.  The callback
 		must read the function or call unread(), or it will be called
@@ -347,15 +366,14 @@ class Socket: # {{{
 		@param callback: function to be called when data can be read.
 		@return The data that was remaining in the line buffer, if any.
 		'''
-		assert have_glib
 		if self.socket is None:
 			return b''
 		ret = self.unread()
 		self._callback = (callback, None)
-		self._event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, lambda fd, cond: (callback() or True))
+		self._event = add_read(self.socket, callback, error)
 		return ret
 	# }}}
-	def read(self, callback, maxsize = 4096): # {{{
+	def read(self, callback, error = None, maxsize = 4096): # {{{
 		'''Register function to be called when data is received.
 		When data is available, read it and call this function.  The
 		data that was remaining in the line buffer, if any, is sent to
@@ -365,24 +383,23 @@ class Socket: # {{{
 		@param maxsize: buffer size that is used for the recv call.
 		@return None.
 		'''
-		assert have_glib
 		if self.socket is None:
 			return b''
 		first = self.unread()
 		self._maxsize = maxsize
 		self._callback = (callback, False)
-		def cb(fd, cond):
+		def cb():
 			data = self.recv(self._maxsize)
 			#log('network read %d bytes' % len(data))
 			if not self._event:
 				return False
 			callback(data)
 			return True
-		self._event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, cb)
+		self._event = add_read(self.socket, cb, error)
 		if first:
 			callback(first)
 	# }}}
-	def readlines(self, callback, maxsize = 4096): # {{{
+	def readlines(self, callback, error = None, maxsize = 4096): # {{{
 		'''Buffer incoming data until a line is received, then call a function.
 		When a newline is received, all data up to that point is
 		decoded as an utf-8 string and passed to the callback.
@@ -393,13 +410,12 @@ class Socket: # {{{
 		not a limit on the line length.
 		@return None.
 		'''
-		assert have_glib
 		if self.socket is None:
 			return
 		self._linebuffer = self.unread()
 		self._maxsize = maxsize
 		self._callback = (callback, True)
-		self._event = GLib.io_add_watch(self.socket.fileno(), GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, lambda fd, cond: (self._line_cb() or True))
+		self._event = add_read(self.socket, self._line_cb, error)
 	# }}}
 	def _line_cb(self): # {{{
 		self._linebuffer += self.recv(self._maxsize)
@@ -413,6 +429,7 @@ class Socket: # {{{
 				data = makestr(self._linebuffer)
 				self._linebuffer = b''
 				self._callback[0](data)
+		return True
 	# }}}
 	def unread(self): # {{{
 		'''Cancel a read() or rawread() callback.
@@ -421,7 +438,11 @@ class Socket: # {{{
 			is cleared.
 		'''
 		if self._event:
-			GLib.source_remove(self._event)
+			try:
+				remove_read(self._event)
+			except ValueError:
+				# The function already returned False.
+				pass
 			self._event = None
 		ret = self._linebuffer
 		self._linebuffer = b''
@@ -429,251 +450,346 @@ class Socket: # {{{
 	# }}}
 # }}}
 
-if have_glib:	# {{{
-	class Server: # {{{
-		'''Listen on a network port and accept connections.  Optionally register an avahi service.'''
-		def __init__(self, port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None):
-			'''Start a server.
-			@param port: Port to listen on.  Can be an avahi
-				service as "name|description" or a unix domain socket,
-				or a numerical port or service name.
-			@param obj: Object to create when a new connection is
-				accepted.  The new object gets the nex Socket
-				as parameter.  This can be a function instead
-				of an object.
-			@param address: Address to listen on.  If empty, listen
-				on all IPv4 and IPv6 addresses.  If IPv6 is not
-				supported, set this to "0.0.0.0" to listen only
-				on IPv4.
-			@param backlog: Number of connections that are accepted
-				by the kernel while waiting for the program to
-				handle them.
-			@param tls: Whether TLS encryption should be enabled.
-				If False or "-", it is disabled.  If True, it
-				is enabled with the default hostname.  If None
-				or "", it is enabled if possible.  If a str, it
-				is enabled with that string used as hostname.
-				New keys are generated if they are not
-				available.  If you are serving to the internet,
-				it is a good idea to get them signed by a
-				certificate authority.  They are in
-				~/.local/share/network/.
-			@param disconnect_cb: Function which is called when a
-				socket loses its connection.  It receives the
-				socket and any data that was remaining in the
-				buffer as an argument.
-			'''
-			self._disconnect_cb = disconnect_cb
-			self._group = None
-			self._obj = obj
-			## Port that is listened on. (read only)
-			self.port = ''
-			## Whether the server listens for IPv6. (read only)
-			self.ipv6 = False
-			self._socket = None
-			## False or the hostname for which the TLS keys are used. (read only)
-			self.tls = tls
-			## Currently active connections for this server. (read only set, but elements may be changed)
-			self.connections = set()
-			if isinstance(port, str) and '/' in port:
-				# Unix socket.
-				# TLS is ignored for these sockets.
-				self.tls = False
-				self._socket = socket.socket(socket.AF_UNIX)
-				self._socket.bind(port)
-				self.port = port
-				self._socket.listen(backlog)
-			elif have_avahi and isinstance(port, str) and '|' in port:
-				self._tls_init()
-				self._socket = socket.socket()
-				self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-				if address == '':
-					self._socket6 = socket.socket(socket.AF_INET6)
-					self._socket6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-				info = port.split('|')
-				self.port = port
-				if len(info) > 2:
-					self._socket.bind((address, lookup(info[2])))
-				self._socket.listen(backlog)
-				if address == '':
-					p = self._socket.getsockname()[1]
-					self._socket6.bind(('::1', p))
-					self._socket6.listen(backlog)
-					self.ipv6 = True
-				bus = dbus.SystemBus()
-				server = dbus.Interface(bus.get_object(avahi.DBUS_NAME, avahi.DBUS_PATH_SERVER), avahi.DBUS_INTERFACE_SERVER)
-				self._group = dbus.Interface(bus.get_object(avahi.DBUS_NAME, server.EntryGroupNew()), avahi.DBUS_INTERFACE_ENTRY_GROUP)
-				self._group.AddService(avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, dbus.UInt32(0), info[1], '_%s._tcp' % info[0], '', '', dbus.UInt16(self._socket.getsockname()[1]), '')
-				self._group.Commit()
-			else:
-				self._tls_init()
-				port = lookup(port)
-				self._socket = socket.socket()
-				self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-				self._socket.bind((address, port))
-				self._socket.listen(backlog)
-				if address == '':
-					self._socket6 = socket.socket(socket.AF_INET6)
-					self._socket6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-					self._socket6.bind(('::1', port))
-					self._socket6.listen(backlog)
-					self.ipv6 = True
-				self.port = port
-			fd = self._socket.fileno()
-			GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, self._cb)
-			if self.ipv6:
-				fd = self._socket6.fileno()
-				GLib.io_add_watch(fd, GLib.IO_IN | GLib.IO_PRI | GLib.IO_HUP | GLib.IO_ERR, self._cb)
-		def set_disconnect_cb(self, disconnect_cb):
-			'''Change the function that is called when a socket disconnects.
-			@param disconnect_cb: the new callback function.
-			@return None.
-			'''
-			self._disconnect_cb = disconnect_cb
-		def _cb(self, fd, cond):
-			if fd == self._socket.fileno():
-				new_socket = self._socket.accept()
-			else:
-				new_socket = self._socket6.accept()
-			#log('Accepted connection from %s; possibly attempting to set up encryption' % repr(new_socket))
-			if self.tls:
-				assert have_ssl
-				try:
-					new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self._tls_cert, keyfile = self._tls_key), new_socket[1])
-				except ssl.SSLError as e:
-					log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
-					try:
-						new_socket[0].shutdown(socket.SHUT_RDWR)
-					except:
-						# Ignore errors here.
-						pass
-					return True
-				except socket.error as e:
-					log('Rejecting connection for %s: %s' % (repr(new_socket[1]), str(e)))
-					try:
-						new_socket[0].shutdown(socket.SHUT_RDWR)
-					except:
-						# Don't care about errors on shutdown.
-						pass
-					return True
-				#log('Accepted TLS connection from %s' % repr(new_socket[1]))
-			s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self._handle_disconnect)
-			self.connections.add(s)
-			self._obj(s)
-			return True
-		def _handle_disconnect(self, socket, data):
-			#log('Closed connection to %s' % repr(socket.remote))
-			self.connections.remove(socket)
-			if self._disconnect_cb:
-				return self._disconnect_cb(socket, data)
-			return data
-		def close(self):
-			'''Stop the server.
-			@return None.
-			'''
-			if self._group:
-				self._group.Reset()
-				self._group = None
-			self._socket.close()
-			self._socket = None
-			if self.ipv6:
-				self._socket6.close()
-				self._socket6 = None
-			if '/' in self.port:
-				os.remove(self.port)
-			self.port = ''
-		def __del__(self):
-			'''Stop the server.
-			@return None.
-			'''
-			if self._socket is not None:
-				self.close()
-		def _tls_init(self):
-			# Set up members for using tls, if requested.
-			if self.tls in (False, '-'):
-				self.tls = False
-				return
-			if self.tls in (None, True, ''):
-				self.tls = fhs.module_get_config('network')['tls']
-			if self.tls == '':
-				self.tls = socket.getfqdn()
-			elif self.tls == '-':
-				self.tls = False
-				return
-			# Use tls.
-			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
-			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
-			if fc is None or fk is None:
-				# Create new self-signed certificate.
-				certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
-				csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), opened = False, packagename = 'network')
-				for p in (certfile, csrfile):
-					path = os.path.dirname(p)
-					if not os.path.exists(path):
-						os.makedirs(path)
-				keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
-				path = os.path.dirname(keyfile)
-				if not os.path.exists(path):
-					os.makedirs(path, 0o700)
-				os.system('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, keyfile, certfile))
-				os.system('openssl req -subj "/CN=%s" -new -key "%s" -out "%s"' % (self.tls, keyfile, csrfile))
-				fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
-				fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
-			self._tls_cert = fc
-			self._tls_key = fk
-			#print(fc, fk)
-	# }}}
-
-	_loop = None
-	def fgloop(timeout = None): # {{{
-		'''Wait for events and handle them.
-		This function does not fork into the background like bgloop().
-		@param timeout: if not None, the function returns when the
-			timeout (in seconds) expires.
-		@return True if the timeout was reached, False if the loop was
-			stopped for a different reason.
+class Server: # {{{
+	'''Listen on a network port and accept connections.  Optionally register an avahi service.'''
+	def __init__(self, port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None):
+		'''Start a server.
+		@param port: Port to listen on.  Can be an avahi
+			service as "name|description" or a unix domain socket,
+			or a numerical port or service name.
+		@param obj: Object to create when a new connection is
+			accepted.  The new object gets the nex Socket
+			as parameter.  This can be a function instead
+			of an object.
+		@param address: Address to listen on.  If empty, listen
+			on all IPv4 and IPv6 addresses.  If IPv6 is not
+			supported, set this to "0.0.0.0" to listen only
+			on IPv4.
+		@param backlog: Number of connections that are accepted
+			by the kernel while waiting for the program to
+			handle them.
+		@param tls: Whether TLS encryption should be enabled.
+			If False or "-", it is disabled.  If True, it
+			is enabled with the default hostname.  If None
+			or "", it is enabled if possible.  If a str, it
+			is enabled with that string used as hostname.
+			New keys are generated if they are not
+			available.  If you are serving to the internet,
+			it is a good idea to get them signed by a
+			certificate authority.  They are in
+			~/.local/share/network/.
+		@param disconnect_cb: Function which is called when a
+			socket loses its connection.  It receives the
+			socket and any data that was remaining in the
+			buffer as an argument.
 		'''
-		global _loop
-		assert _loop is None
-		_loop = GLib.MainLoop()
-		notify = []
-		if timeout is not None:
-			_timeout = GLib.timeout_add(timeout * 1000, lambda: notify.append(True) or (endloop() and False))
-		_loop.run()
-		if len(notify) > 0:
-			return True
-		if timeout is not None:
-			GLib.source_remove(_timeout)
-		return False
-	# }}}
-
-	def bgloop(): # {{{
-		'''Like fgloop, but forks to the background.
-		Unlike fgloop(), this function does not support a timeout.
-		If the environment variable NETWORK_NO_FORK is set, it will
-		remain in the foreground.
-		@return None.'''
-		if os.getenv('NETWORK_NO_FORK') is None:
-			if os.fork() != 0:
-				sys.exit(0)
+		self._disconnect_cb = disconnect_cb
+		self._group = None
+		self._obj = obj
+		## Port that is listened on. (read only)
+		self.port = ''
+		## Whether the server listens for IPv6. (read only)
+		self.ipv6 = False
+		self._socket = None
+		## False or the hostname for which the TLS keys are used. (read only)
+		self.tls = tls
+		## Currently active connections for this server. (read only set, but elements may be changed)
+		self.connections = set()
+		if isinstance(port, str) and '/' in port:
+			# Unix socket.
+			# TLS is ignored for these sockets.
+			self.tls = False
+			self._socket = socket.socket(socket.AF_UNIX)
+			self._socket.bind(port)
+			self.port = port
+			self._socket.listen(backlog)
+		elif have_avahi and isinstance(port, str) and '|' in port:
+			self._tls_init()
+			self._socket = socket.socket()
+			self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			if address == '':
+				self._socket6 = socket.socket(socket.AF_INET6)
+				self._socket6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			info = port.split('|')
+			self.port = port
+			if len(info) > 2:
+				self._socket.bind((address, lookup(info[2])))
+			self._socket.listen(backlog)
+			if address == '':
+				p = self._socket.getsockname()[1]
+				self._socket6.bind(('::1', p))
+				self._socket6.listen(backlog)
+				self.ipv6 = True
+			bus = dbus.SystemBus()
+			server = dbus.Interface(bus.get_object(avahi.DBUS_NAME, avahi.DBUS_PATH_SERVER), avahi.DBUS_INTERFACE_SERVER)
+			self._group = dbus.Interface(bus.get_object(avahi.DBUS_NAME, server.EntryGroupNew()), avahi.DBUS_INTERFACE_ENTRY_GROUP)
+			self._group.AddService(avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, dbus.UInt32(0), info[1], '_%s._tcp' % info[0], '', '', dbus.UInt16(self._socket.getsockname()[1]), '')
+			self._group.Commit()
 		else:
-			log('Not backgrounding because NETWORK_NO_FORK is set\n')
-		fgloop()
-	# }}}
-
-	def endloop(): # {{{
-		'''Stop a loop that was started with fgloop() or bgloop().
+			self._tls_init()
+			port = lookup(port)
+			self._socket = socket.socket()
+			self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			self._socket.bind((address, port))
+			self._socket.listen(backlog)
+			if address == '':
+				self._socket6 = socket.socket(socket.AF_INET6)
+				self._socket6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+				self._socket6.bind(('::1', port))
+				self._socket6.listen(backlog)
+				self.ipv6 = True
+			self.port = port
+		self._event = add_read(self._socket, lambda: self._cb(False), lambda: self._cb(False))
+		if self.ipv6:
+			self._event = add_read(self._socket6, lambda: self._cb(True), lambda: self._cb(True))
+	def set_disconnect_cb(self, disconnect_cb):
+		'''Change the function that is called when a socket disconnects.
+		@param disconnect_cb: the new callback function.
 		@return None.
 		'''
-		global _loop
-		assert _loop is not None
-		_loop.quit()
-		_loop = None
-	# }}}
+		self._disconnect_cb = disconnect_cb
+	def _cb(self, is_ipv6):
+		if is_ipv6:
+			new_socket = self._socket6.accept()
+		else:
+			new_socket = self._socket.accept()
+		#log('Accepted connection from %s; possibly attempting to set up encryption' % repr(new_socket))
+		if self.tls:
+			assert have_ssl
+			try:
+				new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self._tls_cert, keyfile = self._tls_key), new_socket[1])
+			except ssl.SSLError as e:
+				log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
+				try:
+					new_socket[0].shutdown(socket.SHUT_RDWR)
+				except:
+					# Ignore errors here.
+					pass
+				return True
+			except socket.error as e:
+				log('Rejecting connection for %s: %s' % (repr(new_socket[1]), str(e)))
+				try:
+					new_socket[0].shutdown(socket.SHUT_RDWR)
+				except:
+					# Don't care about errors on shutdown.
+					pass
+				return True
+			#log('Accepted TLS connection from %s' % repr(new_socket[1]))
+		s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self._handle_disconnect)
+		self.connections.add(s)
+		self._obj(s)
+		return True
+	def _handle_disconnect(self, socket, data):
+		#log('Closed connection to %s' % repr(socket.remote))
+		self.connections.remove(socket)
+		if self._disconnect_cb:
+			return self._disconnect_cb(socket, data)
+		return data
+	def close(self):
+		'''Stop the server.
+		@return None.
+		'''
+		if self._group:
+			self._group.Reset()
+			self._group = None
+		self._socket.close()
+		self._socket = None
+		if self.ipv6:
+			self._socket6.close()
+			self._socket6 = None
+		if isinstance(self.port, str) and '/' in self.port:
+			os.remove(self.port)
+		self.port = ''
+	def __del__(self):
+		'''Stop the server.
+		@return None.
+		'''
+		if self._socket is not None:
+			self.close()
+	def _tls_init(self):
+		# Set up members for using tls, if requested.
+		if self.tls in (False, '-'):
+			self.tls = False
+			return
+		if self.tls in (None, True, ''):
+			self.tls = fhs.module_get_config('network')['tls']
+		if self.tls == '':
+			self.tls = socket.getfqdn()
+		elif self.tls == '-':
+			self.tls = False
+			return
+		# Use tls.
+		fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
+		fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
+		if fc is None or fk is None:
+			# Create new self-signed certificate.
+			certfile = fhs.write_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
+			csrfile = fhs.write_data(os.path.join('csr', self.tls + os.extsep + 'csr'), opened = False, packagename = 'network')
+			for p in (certfile, csrfile):
+				path = os.path.dirname(p)
+				if not os.path.exists(path):
+					os.makedirs(path)
+			keyfile = fhs.write_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
+			path = os.path.dirname(keyfile)
+			if not os.path.exists(path):
+				os.makedirs(path, 0o700)
+			os.system('openssl req -x509 -nodes -days 3650 -newkey rsa:4096 -subj "/CN=%s" -keyout "%s" -out "%s"' % (self.tls, keyfile, certfile))
+			os.system('openssl req -subj "/CN=%s" -new -key "%s" -out "%s"' % (self.tls, keyfile, csrfile))
+			fc = fhs.read_data(os.path.join('certs', self.tls + os.extsep + 'pem'), opened = False, packagename = 'network')
+			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
+		self._tls_cert = fc
+		self._tls_key = fk
+		#print(fc, fk)
+# }}}
 
-	def iteration(): # {{{
-		'''Do a single iteration of the GLib main loop.  Do not block.
-		@return None.'''
-		GLib.MainContext().iteration(False)
-	# }}}
+_timeouts = []
+_abort = False
+def _handle_timeouts(): # {{{
+	now = time.time()
+	while not _abort and len(_timeouts) > 0 and _timeouts[0][0] <= now:
+		_timeouts.pop(0)[1]()
+	if len(_timeouts) == 0:
+		return math.inf
+	return _timeouts[0][0] - now
+# }}}
+
+_fds = [[], []]
+def iteration(block = False): # {{{
+	'''Do a single iteration of the main loop.
+	@return None.'''
+	# The documentation says timeout should be omitted, it doesn't mention making it None.
+	t = _handle_timeouts()
+	if not block:
+		t = 0
+	if math.isinf(t):
+		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1])
+	else:
+		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1], t)
+	for f in ret[2]:
+		f.error()
+		if _abort:
+			return
+	for f in ret[0]:
+		if not f.handle():
+			remove_read(f)
+		if _abort:
+			return
+	for f in ret[1]:
+		if not f.handle():
+			remove_write(f)
+		if _abort:
+			return
+	_handle_timeouts()
+# }}}
+
+_running = False
+_idle = []
+def fgloop(): # {{{
+	'''Wait for events and handle them.
+	This function does not fork into the background like bgloop().
+	@return None.
+	'''
+	global _running
+	assert not _running
+	_running = True
+	try:
+		while _running:
+			iteration(len(_idle) == 0)
+			if not _running:
+				return False
+			for i in _idle:
+				if not i():
+					remove_idle(i)
+				if not _running:
+					break
+	finally:
+		_abort = False
+	return False
+# }}}
+
+def bgloop(): # {{{
+	'''Like fgloop, but forks to the background.
+	Unlike fgloop(), this function does not support a timeout.
+	If the environment variable NETWORK_NO_FORK is set, it will
+	remain in the foreground.
+	@return None.'''
+	assert _running == False
+	if os.getenv('NETWORK_NO_FORK') is None:
+		if os.fork() != 0:
+			sys.exit(0)
+	else:
+		log('Not backgrounding because NETWORK_NO_FORK is set\n')
+	fgloop()
+# }}}
+
+def endloop(force = False): # {{{
+	'''Stop a loop that was started with fgloop() or bgloop().
+	@return None.
+	'''
+	global _running, _abort
+	assert _running
+	_running = False
+	if force:
+		_abort = True
+# }}}
+
+class _fd_wrap: # {{{
+	def __init__(self, fd, cb, error):
+		self.fd = fd
+		self.handle = cb
+		if error is not None:
+			self.error = error
+		else:
+			self.error = self.default_error
+	def fileno(self):
+		if isinstance(self.fd, int):
+			return self.fd
+		else:
+			return self.fd.fileno()
+	def default_error(self):
+		try:
+			remove_read(self)
+			log('Error returned from select; removed fd from read list')
+		except:
+			try:
+				remove_write(self)
+				log('Error returned from select; removed fd from write list')
+			except:
+				log('Error returned from select, but fd was not in read or write list')
+# }}}
+
+def add_read(fd, cb, error = None): # {{{
+	_fds[0].append(_fd_wrap(fd, cb, error))
+	return _fds[0][-1]
+# }}}
+
+def add_write(fd, cb, error = None): # {{{
+	_fds[1].append(_fd_wrap(fd, cb, error))
+	return _fds[1][-1]
+# }}}
+
+def add_timeout(abstime, cb): # {{{
+	_timeouts.append([abstime, cb])
+	return _timeouts[-1]
+# }}}
+
+def add_idle(cb): # {{{
+	_idle.append(cb)
+	return _idle[-1]
+# }}}
+
+def remove_read(handle): # {{{
+	_fds[0].remove(handle)
+# }}}
+
+def remove_write(handle): # {{{
+	_fds[1].remove(handle)
+# }}}
+
+def remove_timeout(handle): # {{{
+	_timeouts.remove(handle)
+# }}}
+
+def remove_idle(handle): # {{{
+	_idle.remove(handle)
 # }}}
