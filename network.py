@@ -390,7 +390,7 @@ class Socket: # {{{
 		self._callback = (callback, False)
 		def cb():
 			data = self.recv(self._maxsize)
-			#log('network read %d bytes' % len(data))
+			log('network read %d bytes' % len(data))
 			if not self._event:
 				return False
 			callback(data)
@@ -665,13 +665,19 @@ def iteration(block = False): # {{{
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1])
 	else:
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1], t)
+	log(repr(ret))
 	for f in ret[2]:
 		f.error()
 		if _abort:
 			return
 	for f in ret[0]:
+		log(repr(f.handle))
 		if not f.handle():
-			remove_read(f)
+			try:
+				remove_read(f)
+			except ValueError:
+				# The connection was already closed.
+				pass
 		if _abort:
 			return
 	for f in ret[1]:
@@ -760,6 +766,7 @@ class _fd_wrap: # {{{
 
 def add_read(fd, cb, error = None): # {{{
 	_fds[0].append(_fd_wrap(fd, cb, error))
+	log('adding read %s' % repr(_fds[0][-1]))
 	return _fds[0][-1]
 # }}}
 
@@ -779,6 +786,7 @@ def add_idle(cb): # {{{
 # }}}
 
 def remove_read(handle): # {{{
+	log('removing read %s' % repr(handle))
 	_fds[0].remove(handle)
 # }}}
 
