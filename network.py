@@ -390,7 +390,7 @@ class Socket: # {{{
 		self._callback = (callback, False)
 		def cb():
 			data = self.recv(self._maxsize)
-			log('network read %d bytes' % len(data))
+			#log('network read %d bytes' % len(data))
 			if not self._event:
 				return False
 			callback(data)
@@ -665,13 +665,11 @@ def iteration(block = False): # {{{
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1])
 	else:
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1], t)
-	log(repr(ret))
 	for f in ret[2]:
 		f.error()
 		if _abort:
 			return
 	for f in ret[0]:
-		log(repr(f.handle))
 		if not f.handle():
 			try:
 				remove_read(f)
