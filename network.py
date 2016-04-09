@@ -764,7 +764,6 @@ class _fd_wrap: # {{{
 
 def add_read(fd, cb, error = None): # {{{
 	_fds[0].append(_fd_wrap(fd, cb, error))
-	log('adding read %s' % repr(_fds[0][-1]))
 	return _fds[0][-1]
 # }}}
 
@@ -784,7 +783,6 @@ def add_idle(cb): # {{{
 # }}}
 
 def remove_read(handle): # {{{
-	log('removing read %s' % repr(handle))
 	_fds[0].remove(handle)
 # }}}
 
