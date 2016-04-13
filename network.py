@@ -649,7 +649,7 @@ def _handle_timeouts(): # {{{
 	while not _abort and len(_timeouts) > 0 and _timeouts[0][0] <= now:
 		_timeouts.pop(0)[1]()
 	if len(_timeouts) == 0:
-		return math.inf
+		return float('inf')
 	return _timeouts[0][0] - now
 # }}}
 
