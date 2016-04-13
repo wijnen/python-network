@@ -774,8 +774,9 @@ def add_write(fd, cb, error = None): # {{{
 
 def add_timeout(abstime, cb): # {{{
 	_timeouts.append([abstime, cb])
-	_timeouts.sort(key = lambda x: x[0])
-	return _timeouts[-1]
+	ret = _timeouts[-1]
+	_timeouts.sort()
+	return ret
 # }}}
 
 def add_idle(cb): # {{{
