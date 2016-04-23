@@ -58,6 +58,7 @@ import re
 import time
 import fhs
 fhs.module_init('network', {'tls': ''})
+import traceback
 
 try:
 	import ssl
@@ -661,15 +662,26 @@ def iteration(block = False): # {{{
 	t = _handle_timeouts()
 	if not block:
 		t = 0
+	#log('do select with timeout %f' % t)
 	if math.isinf(t):
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1])
 	else:
 		ret = select.select(_fds[0], _fds[1], _fds[0] + _fds[1], t)
+	#log('select returned %s' % repr(ret))
 	for f in ret[2]:
-		f.error()
+		if f not in _fds[0] and f not in _fds[1]:
+			continue
+		if not f.error():
+			try:
+				remove_read(f)
+			except ValueError:
+				# The connection was already closed.
+				pass
 		if _abort:
 			return
 	for f in ret[0]:
+		if f not in _fds[0]:
+			continue
 		if not f.handle():
 			try:
 				remove_read(f)
@@ -679,6 +691,8 @@ def iteration(block = False): # {{{
 		if _abort:
 			return
 	for f in ret[1]:
+		if f not in _fds[1]:
+			continue
 		if not f.handle():
 			remove_write(f)
 		if _abort:
@@ -764,6 +778,7 @@ class _fd_wrap: # {{{
 
 def add_read(fd, cb, error = None): # {{{
 	_fds[0].append(_fd_wrap(fd, cb, error))
+	#log('add read %s' % repr(_fds[0][-1]))
 	return _fds[0][-1]
 # }}}
 
@@ -785,6 +800,8 @@ def add_idle(cb): # {{{
 # }}}
 
 def remove_read(handle): # {{{
+	#log('remove read %s' % repr(handle))
+	#traceback.print_stack()
 	_fds[0].remove(handle)
 # }}}
 
