@@ -715,7 +715,7 @@ def fgloop(): # {{{
 			iteration(len(_idle) == 0)
 			if not _running:
 				return False
-			for i in _idle:
+			for i in _idle[:]:
 				if not i():
 					remove_idle(i)
 				if not _running:
