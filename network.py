@@ -182,7 +182,7 @@ def wrap(i, o): # {{{
 class Socket: # {{{
 	'''Connection object.
 	'''
-	def __init__(self, address, tls = None, disconnect_cb = None, remote = None): # {{{
+	def __init__(self, address, tls = None, disconnect_cb = None, remote = None, connections = None): # {{{
 		'''Create a connection.
 		@param address: connection target.  This is a unix domain
 		socket if there is a / in it.  It is an avahi service if there
@@ -200,11 +200,16 @@ class Socket: # {{{
 		@param disconnect_cb: callback function for when the connection
 		is lost.
 		@param remote: For internal use only.
+		@param connections: For internal use only.
 		'''
 		## read only variable which indicates whether TLS encryption is used on this socket.
 		self.tls = tls
 		## remote end of the network connection.
 		self.remote = remote
+		## connections set where this socket is registered.
+		self.connections = connections
+		if self.connections is not None:
+			self.connections.add(self)
 		## underlying socket object.
 		self.socket = None
 		self._disconnect_cb = disconnect_cb
@@ -300,6 +305,8 @@ class Socket: # {{{
 		data = self.unread()
 		self.socket.close()
 		self.socket = None
+		if self.connections is not None:
+			self.connections.remove(self)
 		if self._disconnect_cb:
 			return self._disconnect_cb(self, data) or b''
 		return data
@@ -484,7 +491,6 @@ class Server: # {{{
 			socket and any data that was remaining in the
 			buffer as an argument.
 		'''
-		self._disconnect_cb = disconnect_cb
 		self._group = None
 		self._obj = obj
 		## Port that is listened on. (read only)
@@ -496,6 +502,8 @@ class Server: # {{{
 		self.tls = tls
 		## Currently active connections for this server. (read only set, but elements may be changed)
 		self.connections = set()
+		## Disconnect handler, to be used for new sockets.
+		self.disconnect_cb = disconnect_cb
 		if isinstance(port, str) and '/' in port:
 			# Unix socket.
 			# TLS is ignored for these sockets.
@@ -543,12 +551,6 @@ class Server: # {{{
 		self._event = add_read(self._socket, lambda: self._cb(False), lambda: self._cb(False))
 		if self.ipv6:
 			self._event = add_read(self._socket6, lambda: self._cb(True), lambda: self._cb(True))
-	def set_disconnect_cb(self, disconnect_cb):
-		'''Change the function that is called when a socket disconnects.
-		@param disconnect_cb: the new callback function.
-		@return None.
-		'''
-		self._disconnect_cb = disconnect_cb
 	def _cb(self, is_ipv6):
 		if is_ipv6:
 			new_socket = self._socket6.accept()
@@ -576,16 +578,9 @@ class Server: # {{{
 					pass
 				return True
 			#log('Accepted TLS connection from %s' % repr(new_socket[1]))
-		s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self._handle_disconnect)
-		self.connections.add(s)
+		s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self.disconnect_cb, connections = self.connections)
 		self._obj(s)
 		return True
-	def _handle_disconnect(self, socket, data):
-		#log('Closed connection to %s' % repr(socket.remote))
-		self.connections.remove(socket)
-		if self._disconnect_cb:
-			return self._disconnect_cb(socket, data)
-		return data
 	def close(self):
 		'''Stop the server.
 		@return None.
