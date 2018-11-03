@@ -320,7 +320,10 @@ class Socket: # {{{
 		if self.socket is None:
 			return
 		#print 'sending %s' % repr(data)
-		self.socket.sendall(data)
+		try:
+			self.socket.sendall(data)
+		except BrokenPipeError:
+			self.close()
 	# }}}
 	def sendline(self, data): # {{{
 		'''Send a line of text.
