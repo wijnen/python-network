@@ -12,7 +12,7 @@ Description: python module for easy networking
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"
  approach, like the rest of Python. With this module, networking is a piece of
- cake. It can use tcp sockets and unix domain sockets, and supports avahi.
+ cake. It can use tcp sockets and unix domain sockets.
  .
  This module provides a Socket class and a Server class.  The Server creates
  Sockets when accepting connections; Sockets can be created by the user to
@@ -31,7 +31,7 @@ Description: API documentation for python3-network
  Implementing networking in C is a pain. Unfortunately, much of that pain is
  copied to Python. This module instead tries to follow the "batteries included"
  approach, like the rest of Python. With this module, networking is a piece of
- cake. It can use tcp sockets and unix domain sockets, and supports avahi.
+ cake. It can use tcp sockets and unix domain sockets.
  .
  This module provides a Socket class and a Server class.  The Server creates
  Sockets when accepting connections; Sockets can be created by the user to

@@ -1,6 +1,6 @@
 # vim: set fileencoding=utf-8 foldmethod=marker :
 
-# {{{ Copyright 2013-2016 Bas Wijnen <wijnen@debian.org>
+# {{{ Copyright 2013-2019 Bas Wijnen <wijnen@debian.org>
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
 # published by the Free Software Foundation, either version 3 of the
@@ -17,36 +17,20 @@
 
 '''@mainpage
 Python-network is a module which intends to make networking easy.  It supports
-unix domain sockets and TLS encryption.  Connection targets can be specified in
-several ways.  Avahi is supported if it is detected.
+tcp and unix domain sockets.  Connection targets can be specified in several
+ways.
 '''
 
 '''@file
 Python module for easy networking.  This module intends to make networking
-easy.  It supports unix domain sockets and TLS encryption.  Connection targets
-can be specified in several ways.  Avahi is supported if it is detected.
+easy.  It supports tcp and unix domain sockets.  Connection targets can be
+specified in several ways.
 '''
 
 '''@package network Python module for easy networking.
-This module intends to make networking easy.  It supports unix domain sockets
-and TLS encryption.  Connection targets can be specified in several ways.
-Avahi is supported if it is detected.
+This module intends to make networking easy.  It supports tcp and unix domain
+sockets.  Connection targets can be specified in several ways.
 '''
-
-# {{{ Copyright 2012 Bas Wijnen <wijnen@debian.org>
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as
-# published by the Free Software Foundation, either version 3 of the
-# License, or(at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# }}}
 
 # {{{ Imports.
 import math
@@ -65,13 +49,6 @@ try:
 	have_ssl = True
 except:
 	have_ssl = False
-try:
-	import avahi
-	import dbus
-	from dbus.mainloop.glib import DBusGMainLoop
-	have_avahi = True
-except:
-	have_avahi = False
 # }}}
 
 # {{{ Interface description
@@ -185,13 +162,10 @@ class Socket: # {{{
 	def __init__(self, address, tls = None, disconnect_cb = None, remote = None, connections = None): # {{{
 		'''Create a connection.
 		@param address: connection target.  This is a unix domain
-		socket if there is a / in it.  It is an avahi service if there
-		is a | in it.  This is written as service|regexp, where regexp
-		must match the long service name and can be empty to match all.
-		If it is not a unix domain socket or an avahi service, it is
-		port number or service name, optionally prefixed with a
-		hostname and a :.  If no hostname is present, localhost is
-		used.
+		socket if there is a / in it.  If it is not a unix domain
+		socket, it is a port number or service name, optionally
+		prefixed with a hostname and a :.  If no hostname is present,
+		localhost is used.
 		@param tls: whether TLS encryption should be used.  Can be True
 		or False, or None to try encryption first and fall back to
 		unencrypted.  Setting this to None may trigger an error message
@@ -225,43 +199,6 @@ class Socket: # {{{
 			self.remote = address
 			self.socket = socket.socket(socket.AF_UNIX)
 			self.socket.connect(self.remote)
-		elif have_avahi and isinstance(address, str) and '|' in address:
-			# Avahi.
-			ret = []
-			found = [False]
-			info = address.split('|')
-			assert len(info) == 2
-			regexp = re.compile(info[1])
-			type = '_%s._tcp' % info[0]
-			bus = dbus.SystemBus(mainloop = DBusGMainLoop())
-			server = dbus.Interface(bus.get_object(avahi.DBUS_NAME, '/'), 'org.freedesktop.Avahi.Server')
-			browser = dbus.Interface(bus.get_object(avahi.DBUS_NAME, server.ServiceBrowserNew(avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, type, 'local', dbus.UInt32(0))), avahi.DBUS_INTERFACE_SERVICE_BROWSER)
-			def handle2(*args):
-				self.remote = (str(args[5]), int(args[8]))
-				mainloop.quit()
-			def handle_error(*args):
-				log('avahi lookup error(ignored): %s' % args[0])
-			def handle(interface, protocol, name, type, domain, flags):
-				if found[0]:
-					return
-				if regexp.match(name):
-					found[0] = True
-					server.ResolveService(interface, protocol, name, type, domain, avahi.PROTO_UNSPEC, dbus.UInt32(0), reply_handler = handle2, error_handler = handle_error)
-			def handle_eof():
-				if found[0]:
-					return
-				self.remote = None
-				mainloop.quit()
-			browser.connect_to_signal('ItemNew', handle)
-			browser.connect_to_signal('AllForNow', handle_eof)
-			browser.connect_to_signal('Failure', handle_eof)
-			# TODO: avahi without GLib.
-			mainloop = GLib.MainLoop()
-			mainloop.run()
-			if self.remote is not None:
-				self._setup_connection()
-			else:
-				raise EOFError('Avahi service not found')
 		else:
 			if isinstance(address, str) and ':' in address:
 				host, port = address.rsplit(':', 1)
@@ -462,12 +399,11 @@ class Socket: # {{{
 # }}}
 
 class Server: # {{{
-	'''Listen on a network port and accept connections.  Optionally register an avahi service.'''
-	def __init__(self, port, obj, address = '', backlog = 5, tls = None, disconnect_cb = None):
+	'''Listen on a network port and accept connections.'''
+	def __init__(self, port, obj, address = '', backlog = 5, tls = False, disconnect_cb = None):
 		'''Start a server.
-		@param port: Port to listen on.  Can be an avahi
-			service as "name|description" or a unix domain socket,
-			or a numerical port or service name.
+		@param port: Port to listen on.  Can be a unix domain socket,
+			or a numerical port, or a service name.
 		@param obj: Object to create when a new connection is
 			accepted.  The new object gets the nex Socket
 			as parameter.  This can be a function instead
@@ -515,28 +451,6 @@ class Server: # {{{
 			self._socket.bind(port)
 			self.port = port
 			self._socket.listen(backlog)
-		elif have_avahi and isinstance(port, str) and '|' in port:
-			self._tls_init()
-			self._socket = socket.socket()
-			self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-			if address == '':
-				self._socket6 = socket.socket(socket.AF_INET6)
-				self._socket6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-			info = port.split('|')
-			self.port = port
-			if len(info) > 2:
-				self._socket.bind((address, lookup(info[2])))
-			self._socket.listen(backlog)
-			if address == '':
-				p = self._socket.getsockname()[1]
-				self._socket6.bind(('::1', p))
-				self._socket6.listen(backlog)
-				self.ipv6 = True
-			bus = dbus.SystemBus()
-			server = dbus.Interface(bus.get_object(avahi.DBUS_NAME, avahi.DBUS_PATH_SERVER), avahi.DBUS_INTERFACE_SERVER)
-			self._group = dbus.Interface(bus.get_object(avahi.DBUS_NAME, server.EntryGroupNew()), avahi.DBUS_INTERFACE_ENTRY_GROUP)
-			self._group.AddService(avahi.IF_UNSPEC, avahi.PROTO_UNSPEC, dbus.UInt32(0), info[1], '_%s._tcp' % info[0], '', '', dbus.UInt16(self._socket.getsockname()[1]), '')
-			self._group.Commit()
 		else:
 			self._tls_init()
 			port = lookup(port)
