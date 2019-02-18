@@ -159,7 +159,7 @@ def wrap(i, o): # {{{
 class Socket: # {{{
 	'''Connection object.
 	'''
-	def __init__(self, address, tls = None, disconnect_cb = None, remote = None, connections = None): # {{{
+	def __init__(self, address, tls = False, disconnect_cb = None, remote = None, connections = None): # {{{
 		'''Create a connection.
 		@param address: connection target.  This is a unix domain
 		socket if there is a / in it.  If it is not a unix domain
@@ -430,7 +430,6 @@ class Server: # {{{
 			socket and any data that was remaining in the
 			buffer as an argument.
 		'''
-		self._group = None
 		self._obj = obj
 		## Port that is listened on. (read only)
 		self.port = ''
@@ -502,9 +501,6 @@ class Server: # {{{
 		'''Stop the server.
 		@return None.
 		'''
-		if self._group:
-			self._group.Reset()
-			self._group = None
 		self._socket.close()
 		self._socket = None
 		if self.ipv6:
