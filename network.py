@@ -41,7 +41,9 @@ import select
 import re
 import time
 import fhs
-fhs.module_init('network', {'tls': ''})
+modulename = 'network'
+fhs.module_info(modulename, 'Networking made easy', '0.2', 'Bas Wijnen <wijnen@debian.org>')
+fhs.module_option(modulename, 'tls', 'tls hostname for server sockets or True/False for client sockets. Set to - to disable tls on server. If left empty, uses hostname for server, True for client sockets.', default = '')
 import traceback
 
 try:
