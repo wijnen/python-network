@@ -40,6 +40,7 @@ import socket
 import select
 import re
 import time
+import inspect
 import fhs
 modulename = 'network'
 fhs.module_info(modulename, 'Networking made easy', '0.2', 'Bas Wijnen <wijnen@debian.org>')
@@ -73,32 +74,52 @@ else:
 	makestr = lambda x: x
 
 log_output = sys.stderr
+log_date = False
 
 def set_log_output(file): # {{{
 	'''Change target for log().
 	By default, log() sends its output to standard error.  This function is
 	used to change the target.
 	@param file: The new file to write log output to.
+	@return None.
 	'''
-	global log_output
+	global log_output, log_date
 	log_output = file
+	log_date = True
 # }}}
 
-def log(message): # {{{
+def log(*message, filename = None, line = None, funcname = None, depth = 0): # {{{
 	'''Log a message.
 	Write a message to log (default standard error, can be changed with
 	set_log_output()).  A timestamp is added before the message and a
 	newline is added to it.
-	@param message: The message to log.  This must be a str.  It should not contain a newline.
+	@param message: The message to log. Multiple arguments are logged on separate lines. Newlines in arguments cause the message to be split, so they should not contain a closing newline.
+	@param filename: Override filename to report.
+	@param line: Override line number to report.
+	@param funcname: Override function name to report.
+	@param depth: How deep to enter into the call stack for function info.
+	@return None.
 	'''
-	t = time.strftime('%c %Z %z')
-	log_output.write(''.join(['%s: %s\n' % (t, m) for m in message.split('\n')]))
+	t = time.strftime('%F %T' if log_date else '%T')
+	source = inspect.currentframe().f_back
+	for d in range(depth):
+		source = source.f_back
+	code = source.f_code
+	if filename is None:
+		filename = os.path.basename(code.co_filename)
+	if funcname is None:
+		funcname = code.co_name
+	if line is None:
+		line = source.f_lineno
+	for msg in message:
+		log_output.write(''.join(['%s %s:%s:%d:\t%s\n' % (t, filename, funcname, line, m) for m in str(msg).split('\n')]))
 	log_output.flush()
 # }}}
 
 def lookup(service): # {{{
 	'''Convert int or str with int or service to int port.
-	@service: int or numerical str or network service name.
+	@param service: int or numerical str or network service name.
+	@return the port number for the service as an int.
 	'''
 	if isinstance(service, int):
 		return service
@@ -314,6 +335,7 @@ class Socket: # {{{
 		must read the function or call unread(), or it will be called
 		again after returning.
 		@param callback: function to be called when data can be read.
+		@param error: function to be called if there is an error on the socket.
 		@return The data that was remaining in the line buffer, if any.
 		'''
 		if self.socket is None:
@@ -330,6 +352,8 @@ class Socket: # {{{
 		the callback immediately.
 		@param callback: function to call when data is available.  The
 		data is passed as a parameter.
+		@param error: function to be called if there is an error on the
+		socket.
 		@param maxsize: buffer size that is used for the recv call.
 		@return None.
 		'''
@@ -355,6 +379,8 @@ class Socket: # {{{
 		decoded as an utf-8 string and passed to the callback.
 		@param callback: function that is called when a line is
 		received.  The line is passed as a str parameter.
+		@param error: function that is called when there is an error on
+		the socket.
 		@param maxsize: used for the recv calls that are made.  The
 		returned data accumulates until a newline is received; this is
 		not a limit on the line length.
