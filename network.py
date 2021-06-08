@@ -136,13 +136,13 @@ class _Fake: # {{{
 	used as a base for Socket.  Don't call this class directly, use
 	wrap() instead.
 	'''
-	def __init__(self, i, o):
+	def __init__(self, i, o = None):
 		'''Create a fake socket object.
 		@param i: input file.
 		@param o: output file.
 		'''
 		self._i = i
-		self._o = o
+		self._o = o if o is not None else i
 	def close(self):
 		'''Close the fake socket object.
 		@return None.'''
@@ -151,7 +151,8 @@ class _Fake: # {{{
 		'''Send data to fake socket object.
 		@return None.'''
 		while len(data) > 0:
-			ret = os.write(self._o, data)
+			fd = self._o if isinstance(self._o, int) else self._o.fileno()
+			ret = os.write(fd, data)
 			if ret >= 0:
 				data = data[ret:]
 				continue
@@ -169,7 +170,7 @@ class _Fake: # {{{
 		return self._i.fileno()
 # }}}
 
-def wrap(i, o): # {{{
+def wrap(i, o = None): # {{{
 	'''Wrap two files into a fake socket.
 	This function wraps an input and an output file (which may be the same)
 	into a Socket object.
