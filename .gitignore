@@ -1,1 +1,3 @@
-doxygen-output
+/doxygen-output
+/dist
+/network_wrapper.egg-info

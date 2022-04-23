@@ -1,11 +1,12 @@
-python-network (0.2-1) UNRELEASED; urgency=medium
+python-network (0.2-1) unstable; urgency=medium
 
   * New release.
+  * Upload to Debian archive. Closes: #1010012
 
- -- Bas Wijnen <wijnen@debian.org>  Mon, 30 Nov 2015 11:27:01 -0500
+ -- Bas Wijnen <wijnen@debian.org>  Fri, 22 Apr 2022 13:06:34 +0200
 
 python-network (0.1-1) unstable; urgency=medium
 
-  * Initial release. (Closes: #686357)
+  * Initial release. Closes: #686357
 
  -- Bas Wijnen <wijnen@debian.org>  Mon, 30 Nov 2015 11:25:46 -0500
