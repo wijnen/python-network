@@ -1,6 +1,6 @@
 python-network (0.4-1) UNRELEASED; urgency=medium
 
-  * 
+  * Set Multi-Arch: foreign.
 
  -- Bas Wijnen <wijnen@debian.org>  Tue, 31 May 2022 13:28:39 +0200
 
