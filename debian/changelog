@@ -1,3 +1,9 @@
+python-network (0.4-1) UNRELEASED; urgency=medium
+
+  * 
+
+ -- Bas Wijnen <wijnen@debian.org>  Tue, 31 May 2022 13:28:39 +0200
+
 python-network (0.3-1) unstable; urgency=medium
 
   * Update standards version to 4.6.1.
