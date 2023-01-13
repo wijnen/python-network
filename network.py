@@ -183,7 +183,7 @@ def wrap(i, o = None): # {{{
 class Socket: # {{{
 	'''Connection object.
 	'''
-	def __init__(self, address, tls = False, disconnect_cb = None, remote = None, connections = None): # {{{
+	def __init__(self, address, tls = None, disconnect_cb = None, remote = None, connections = None): # {{{
 		'''Create a connection.
 		@param address: connection target.  This is a unix domain
 		socket if there is a / in it.  If it is not a unix domain
@@ -191,10 +191,10 @@ class Socket: # {{{
 		prefixed with a hostname and a :.  If no hostname is present,
 		localhost is used.
 		@param tls: whether TLS encryption should be used.  Can be True
-		or False, or None to try encryption first and fall back to
-		unencrypted.  Setting this to None may trigger an error message
-		and may fail to connect to unencrypted sockets due to the
-		encryption handshake not returning.
+		or False, or None to detect the value from the protocol part of
+		the address (i.e. if the protocol ends with an s and isn't ws,
+		it will be True, otherwise False). If it is None and no
+		protocol is provided in the address, it will default to False.
 		@param disconnect_cb: callback function for when the connection
 		is lost.
 		@param remote: For internal use only.
@@ -217,20 +217,42 @@ class Socket: # {{{
 			#log('new %d' % id(address))
 			self.socket = address
 			return
-		if isinstance(address, str) and '/' in address:
-			# Unix socket.
-			# TLS is ignored for those.
-			self.remote = address
-			self.socket = socket.socket(socket.AF_UNIX)
-			self.socket.connect(self.remote)
-		else:
-			if isinstance(address, str) and ':' in address:
-				host, port = address.rsplit(':', 1)
+		if isinstance(address, str):
+			r = re.match('^(?:([a-z0-9-]+)://)?([^:/?#]+)(?::([^:/?#]+))?([:/?#].*)?$', address)
+                        # Group 1: protocol or None
+                        # Group 2: hostname
+                        # Group 3: port
+                        # Group 4: everything after the port (address, query string, etc)
+			protocol = r.group(1)
+			hostname = r.group(2)
+			port = r.group(3)
+			url = r.group(4)
+			print('protocol', protocol, 'hostname', hostname, 'port', port, 'url', url)
+			if tls is None:
+				if protocol is None:
+					tls = False
+				else:
+					tls = protocol != 'ws' and protocol.endswith('s')
+			if port is None:
+				port = protocol
+			if address.startswith('./') or address.startswith('/') or (port is None and '/' in address):
+				# Unix socket.
+				# TLS is ignored for those.
+				self.remote = address
+				self.socket = socket.socket(socket.AF_UNIX)
+				self.socket.connect(self.remote)
+				return
 			else:
-				host, port = 'localhost', address
-			self.remote = (host, lookup(port))
-			#log('remote %s' % str(self.remote))
-			self._setup_connection()
+				# Url (with possibly some missing parts)
+				if port is None:
+					hostname = 'localhost'
+					port = address
+		else:
+			hostname = 'localhost'
+			port = address
+		self.remote = (hostname, lookup(port))
+		#log('remote %s' % str(self.remote))
+		self._setup_connection()
 	# }}}
 	def _setup_connection(self): # {{{
 		'''Internal function to set up a connection.'''
@@ -658,6 +680,7 @@ def fgloop(): # {{{
 				if not _running:
 					break
 	finally:
+		_running = False
 		_abort = False
 	return False
 # }}}
