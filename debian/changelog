@@ -1,8 +1,13 @@
-python-network (0.4-1) UNRELEASED; urgency=medium
+python-network (0.4-1) unstable; urgency=medium
 
+  * Update standards version to 4.6.2. No changes needed.
   * Set Multi-Arch: foreign.
+  * Handle URL targets.
+  * Update doxygen configuration.
+  * Remove mention of avahi from description, which is no longer supported.
+  * Add package tests.
 
- -- Bas Wijnen <wijnen@debian.org>  Tue, 31 May 2022 13:28:39 +0200
+ -- Bas Wijnen <wijnen@debian.org>  Sun, 19 Feb 2023 08:18:06 +0100
 
 python-network (0.3-1) unstable; urgency=medium
 

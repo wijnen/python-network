@@ -43,8 +43,8 @@ import time
 import inspect
 import fhs
 modulename = 'network'
-fhs.module_info(modulename, 'Networking made easy', '0.2', 'Bas Wijnen <wijnen@debian.org>')
-fhs.module_option(modulename, 'tls', 'tls hostname for server sockets or True/False for client sockets. Set to - to disable tls on server. If left empty, uses hostname for server, True for client sockets.', default = '')
+fhs.module_info(modulename, 'Networking made easy', '0.4', 'Bas Wijnen <wijnen@debian.org>')
+fhs.module_option(modulename, 'tls', 'default tls hostname for server sockets. The code may ignore this option. Set to - to request that tls is disabled on the server. If left empty, detects hostname.', default = '')
 import traceback
 
 try:
@@ -219,22 +219,25 @@ class Socket: # {{{
 			return
 		if isinstance(address, str):
 			r = re.match('^(?:([a-z0-9-]+)://)?([^:/?#]+)(?::([^:/?#]+))?([:/?#].*)?$', address)
-                        # Group 1: protocol or None
-                        # Group 2: hostname
-                        # Group 3: port
-                        # Group 4: everything after the port (address, query string, etc)
-			protocol = r.group(1)
-			hostname = r.group(2)
-			port = r.group(3)
-			url = r.group(4)
-			print('protocol', protocol, 'hostname', hostname, 'port', port, 'url', url)
-			if tls is None:
-				if protocol is None:
-					tls = False
-				else:
-					tls = protocol != 'ws' and protocol.endswith('s')
-			if port is None:
-				port = protocol
+			if r is not None:
+				# Group 1: protocol or None
+				# Group 2: hostname
+				# Group 3: port
+				# Group 4: everything after the port (address, query string, etc)
+				protocol = r.group(1)
+				hostname = r.group(2)
+				port = r.group(3)
+				url = r.group(4)
+				#print('protocol', protocol, 'hostname', hostname, 'port', port, 'url', url)
+				if self.tls is None:
+					if protocol is None:
+						self.tls = False
+					else:
+						self.tls = protocol != 'ws' and protocol.endswith('s')
+				if port is None:
+					port = protocol
+			else:
+				port = None
 			if address.startswith('./') or address.startswith('/') or (port is None and '/' in address):
 				# Unix socket.
 				# TLS is ignored for those.
@@ -242,6 +245,10 @@ class Socket: # {{{
 				self.socket = socket.socket(socket.AF_UNIX)
 				self.socket.connect(self.remote)
 				return
+			elif r is None:
+				# Probably an error, but attempt to parse address as port.
+				hostname = 'localhost'
+				port = address
 			else:
 				# Url (with possibly some missing parts)
 				if port is None:

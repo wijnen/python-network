@@ -1,0 +1,27 @@
+#!/bin/bash -e
+
+d="`mktemp -d`"
+
+cleanup() {
+	rm -rf "$d"
+}
+trap cleanup EXIT
+
+"`dirname "$0"`"/server.py > "$d/server.txt" &
+
+sleep 2
+
+"`dirname "$0"`"/client.py > "$d/client.txt"
+
+cat > "$d/server-correct.txt" <<EOF
+Server received line: quit
+Client disconnected from server
+EOF
+
+cat > "$d/client-correct.txt" <<EOF
+Client received line: here's some data
+Server disconnected from client
+EOF
+
+diff -u "$d/client.txt" "$d/client-correct.txt"
+diff -u "$d/server.txt" "$d/server-correct.txt"
