@@ -267,7 +267,7 @@ class Socket: # {{{
 		if self.tls is None:
 			try:
 				assert have_ssl
-				self.socket = ssl.wrap_socket(self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				self.socket = ssl.create_default_context().wrap_socket(self.socket, server_hostname = self.remote[0])
 				self.tls = True
 			except:
 				self.tls = False
@@ -275,7 +275,7 @@ class Socket: # {{{
 		elif self.tls is True:
 			try:
 				assert have_ssl
-				self.socket = ssl.wrap_socket(self.socket, ssl_version = ssl.PROTOCOL_TLSv1)
+				self.socket = ssl.create_default_context().wrap_socket(self.socket, server_hostname = self.remote[0])
 			except ssl.SSLError as e:
 				raise TypeError('Socket does not seem to support TLS: ' + str(e))
 		else:
@@ -526,15 +526,12 @@ class Server: # {{{
 		if self.ipv6:
 			self._event = add_read(self._socket6, lambda: self._cb(True), lambda: self._cb(True))
 	def _cb(self, is_ipv6):
-		if is_ipv6:
-			new_socket = self._socket6.accept()
-		else:
-			new_socket = self._socket.accept()
 		#log('Accepted connection from %s; possibly attempting to set up encryption' % repr(new_socket))
 		if self.tls:
 			assert have_ssl
 			try:
-				new_socket = (ssl.wrap_socket(new_socket[0], ssl_version = ssl.PROTOCOL_TLSv1, server_side = True, certfile = self._tls_cert, keyfile = self._tls_key), new_socket[1])
+				with self._tls_context.wrap_socket(self._socket6 if is_ipv6 else self._socket, server_side = True) as ssock:
+					new_socket = ssock.accept()
 			except ssl.SSLError as e:
 				log('Rejecting (non-TLS?) connection for %s: %s' % (repr(new_socket[1]), str(e)))
 				try:
@@ -552,6 +549,8 @@ class Server: # {{{
 					pass
 				return True
 			#log('Accepted TLS connection from %s' % repr(new_socket[1]))
+		else:
+			new_socket = (self._socket6 if is_ipv6 else self._socket).accept()
 		s = Socket(new_socket[0], remote = new_socket[1], disconnect_cb = self.disconnect_cb, connections = self.connections)
 		self._obj(s)
 		return True
@@ -606,7 +605,8 @@ class Server: # {{{
 			fk = fhs.read_data(os.path.join('private', self.tls + os.extsep + 'key'), opened = False, packagename = 'network')
 		self._tls_cert = fc
 		self._tls_key = fk
-		#print(fc, fk)
+		self._tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+		self._tls_context.load_cert_chain(self._tls_cert, self._tls_key)
 # }}}
 
 _timeouts = []
