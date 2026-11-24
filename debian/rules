@@ -8,9 +8,10 @@ export PYBUILD_NAME = network
 override_dh_auto_build:
 	dh_auto_build
 	doxygen config.doxygen
-	rm doxygen-output/html/jquery.js
-	ln -s /usr/share/javascript/jquery/jquery.js doxygen-output/html/
-
+	if [ -e doxygen-output/html/jquery.js ] ; then \
+		rm -f doxygen-output/html/jquery.js ; \
+		ln -sf /usr/share/javascript/jquery/jquery.js doxygen-output/html/ ; \
+	fi
 
 override_dh_auto_clean:
 	dh_auto_clean
