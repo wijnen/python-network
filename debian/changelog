@@ -1,6 +1,7 @@
 python-network (0.5-1) UNRELEASED; urgency=medium
 
   * New release.
+  * Update doxygen.
 
  -- Bas Wijnen <wijnen@debian.org>  Wed, 24 May 2023 20:14:35 +0200
 
